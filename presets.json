@@ -1,0 +1,78 @@
+{
+  "gradient_only": {
+    "effect": "gradient",
+    "params": {
+      "boundary": 13.5,
+      "custom_colors": {
+        "space": [
+          79,
+          131,
+          236
+        ]
+      },
+      "hard": true,
+      "left_overrides": [
+        "backspace",
+        "del",
+        "f11",
+        "f12",
+        "ins",
+        "prtsc"
+      ],
+      "right_overrides": [
+        "backslash",
+        "enter",
+        "left_arrow",
+        "right_ctrl",
+        "right_shift"
+      ]
+    }
+  },
+  "gradient_white_chase": {
+    "effect": "typing_reactive",
+    "params": {
+      "base_effect": "gradient",
+      "base_params": {
+        "boundary": 13.5,
+        "custom_colors": {
+          "space": [
+            79,
+            131,
+            236
+          ]
+        },
+        "hard": true,
+        "left_overrides": [
+          "backspace",
+          "del",
+          "f11",
+          "f12",
+          "ins",
+          "prtsc"
+        ],
+        "right_overrides": [
+          "backslash",
+          "enter",
+          "left_arrow",
+          "right_ctrl",
+          "right_shift"
+        ]
+      }
+    }
+  },
+  "rainbow_puke": {
+    "effect": "puke",
+    "params": {}
+  },
+  "rainbow_radial_chase": {
+    "effect": "typing_reactive",
+    "params": {
+      "bolt_shape": "radial",
+      "bolt_style": "rainbow"
+    }
+  },
+  "white_on_white": {
+    "effect": "typing_reactive",
+    "params": {}
+  }
+}

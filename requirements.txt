@@ -1,0 +1,8 @@
+hid>=1.0.5
+fastapi>=0.110
+uvicorn>=0.29
+requests>=2.31
+keyboard>=0.13.5
+pystray>=0.19.5
+pillow>=10.0
+pywebview>=6.0
