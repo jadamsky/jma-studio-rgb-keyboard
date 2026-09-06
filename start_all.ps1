@@ -1,6 +1,12 @@
 # One-click launcher: stop AcerLightingService, start the daemon,
-# start the tray icon. Stopping the service needs admin, so this
-# re-launches itself elevated (one UAC prompt) if it isn't already.
+# start the tray icon. Stopping the service needs admin. Normally this
+# runs via the "JMA Studio Autostart" Scheduled Task (At Log On, Run
+# with highest privileges) -- Task Scheduler elevates it silently, no
+# UAC prompt, since the elevation is pre-authorized in the task
+# definition rather than requested interactively. The self-elevation
+# check below is only a fallback for manually double-clicking
+# start_all.bat outside the scheduled task, where it'll still prompt
+# once, as expected for an interactive elevation request.
 
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -12,7 +18,29 @@ $root = $PSScriptRoot
 $python = Join-Path $root ".venv\Scripts\python.exe"
 
 Write-Host "Stopping AcerLightingService..."
-Stop-Service -Name AcerLightingService -Force -ErrorAction SilentlyContinue
+# Plain Automatic (non-delayed) start, confirmed via the service's
+# registry Start/DelayedAutoStart values -- it starts during boot,
+# well before this AtLogOn-triggered task runs, so it should always
+# already be up here. Retrying anyway is cheap insurance against any
+# unusual edge case (e.g. a slow driver init after a fast-startup
+# resume) where it's still mid-start and a single Stop-Service races it.
+$attempts = 0
+do {
+    $attempts++
+    Stop-Service -Name AcerLightingService -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+    $svc = Get-Service -Name AcerLightingService -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq "Stopped") {
+        Write-Host "AcerLightingService stopped (attempt $attempts)."
+        break
+    }
+    if ($attempts -lt 5) {
+        Write-Host "AcerLightingService not stopped yet (attempt $attempts), retrying..."
+    }
+} while ($attempts -lt 5)
+if ($svc -and $svc.Status -ne "Stopped") {
+    Write-Host "WARNING: AcerLightingService still not stopped after $attempts attempts."
+}
 
 $daemonUp = Test-NetConnection -ComputerName 127.0.0.1 -Port 8420 -InformationLevel Quiet -WarningAction SilentlyContinue
 if ($daemonUp) {

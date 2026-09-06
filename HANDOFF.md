@@ -268,11 +268,53 @@ both DOM state and the daemon's real `/status`/`/presets` endpoints.
   taskbar icon -- flagged twice, not requested yet.
 - Per-key override editing UI for 3+ zone gradients (currently only
   the legacy 2-zone path supports hardware-quirk key overrides).
-- No autostart-on-login wiring for `start_all.bat` -- user explicitly
-  said "I don't need it to autostart when windows starts right now."
 - No test suite committed to the repo (all Playwright scripts are
   session-scratchpad-only, by original design/convenience, not a
   deliberate decision to exclude testing from the repo).
+
+## Autostart on login (added later, after the "not needed yet" note above)
+
+`start_all.bat`/`.ps1` stops `AcerLightingService` (which requires
+admin) before starting the daemon and tray icon. Running that on every
+login would mean a UAC prompt every time if autostarted naively (e.g.
+a plain Startup-folder shortcut). Fixed via a Scheduled
+Task instead of disabling the service outright (user's explicit choice
+-- keeps the option to fall back to PredatorSense's own lighting later
+by just not running this app; the alternative considered was
+permanently setting the service's StartType to Disabled, which would
+have avoided needing elevation at all but forecloses that fallback).
+
+- Task name: **"JMA Studio Autostart"**, registered via
+  `Register-ScheduledTask` (`Get-ScheduledTask -TaskName "JMA Studio
+  Autostart"` to inspect/modify later).
+- Trigger: `AtLogOn` for the `jakea` user.
+- Principal: `LogonType=Interactive`, `RunLevel=Highest` -- this
+  specific combination is what makes Task Scheduler elevate silently
+  at logon with no UAC dialog (elevation is pre-authorized in the task
+  definition itself, unlike an interactive `-Verb RunAs` request).
+  "Run whether user is logged on or not" was deliberately NOT used --
+  that mode runs non-interactively with no desktop session, which
+  would break the tray icon and any GUI window.
+- Action: runs `start_all.bat` directly (working directory set to the
+  project root) -- no duplicate logic; the task just triggers the
+  exact same script a manual double-click would.
+- `start_all.bat` now passes `-WindowStyle Hidden` to the inner
+  PowerShell call so no console window flashes at login.
+- `start_all.ps1`'s own self-elevation check (`-Verb RunAs` if not
+  already admin) is now just a fallback for manually double-clicking
+  the batch file outside the scheduled task -- it's a no-op when
+  launched by the task, since the task already provides an elevated
+  token.
+
+**Verified live**: killed all python processes (confirmed zero
+running), ran `Start-ScheduledTask -TaskName "JMA Studio Autostart"`
+to simulate the logon trigger, and confirmed within ~8s: 4 new python
+processes (daemon + tray, 2 PIDs each per the usual venv-launcher
+pattern), port 8420 listening and answering `/status`, and
+`AcerLightingService` actually stopped (proving it ran elevated) --
+all with no UAC prompt shown at trigger time. Not yet verified across
+an actual reboot/real logon (only a manual task trigger, which uses
+the identical principal/trigger settings a real logon would use).
 
 ## Immediate live state as of writing this file
 
