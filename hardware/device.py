@@ -13,22 +13,31 @@ independent reference implementations -- see below):
       checksum}, sent as a HID *feature* report (SET_REPORT, report ID
       0). checksum = (0xFF - (sum(op,p1..p6) & 0xFF)) & 0xFF.
     - A full apply is always a short *sequence* of these 8-byte
-      commands, not a single one: BEGIN, then a MODE select, then
-      color/frame data, then APPLY. This mirrors PredatorSense's own
-      captured USB traffic.
+      commands, not a single one: an init/handshake command, then a
+      mode-select command, then color/frame data, then a commit
+      command. This mirrors PredatorSense's own captured USB traffic.
     - Full per-key control additionally pushes eight 64-byte
       HID *interrupt-OUT* packets (512 bytes = 128 cells x {0x00, R,
-      G, B}) between the MODE and APPLY commands.
+      G, B}) between the mode-select and commit commands.
 
 Sources (both agree byte-for-byte -- Order52's captured trailing
-"checksum" bytes reproduce exactly under Venator's checksum formula,
-which is what makes this protocol trustworthy rather than guessed):
+"checksum" bytes reproduce exactly under the checksum formula derived
+from Venator's, which is what makes this protocol trustworthy rather
+than guessed). Only the numeric byte VALUES below are taken from these
+projects -- they're facts about the physical wire protocol, not
+copyrightable expression. The constant NAMES, structure, and all code
+in this file are independently written, specifically so this module
+carries no code-level relationship to either project's own (GPL-
+licensed) source:
     - https://github.com/Exyons/Venator (kernel/venator-main.c,
       kernel/venator.h) -- actively maintained, daily-driven on a real
       PH16-71, derived from a full USBPcap capture of PredatorSense.
+      GPL-2.0-only.
     - https://github.com/Order52/ph16-71-rgb (src/rgbkb/controller/
       commands.py, device.py) -- independent Python implementation,
-      used here to cross-check Venator's opcodes/checksum.
+      used here to cross-check the opcodes/checksum. GPL-3.0.
+
+See CREDITS.md at the project root for the full acknowledgment.
 """
 
 from __future__ import annotations
@@ -54,33 +63,36 @@ VENDOR_ID = 0x04F2
 PRODUCT_ID = 0x0117
 LIGHTING_USAGE_PAGE = 0xFF02  # vendor-specific interface
 
-NUM_CELLS = 128          # per Venator: 128-cell per-key framebuffer
+NUM_CELLS = 128           # 128-cell per-key framebuffer
 BYTES_PER_CELL = 4        # {0x00, R, G, B}
 FRAME_PACKET_COUNT = 8
 FRAME_PACKET_SIZE = 64    # 8 packets * 64 bytes = 512 bytes = 128 * 4
 
-# Used for the APPLY command's BRIGHT byte when send_frame() doesn't
-# take a brightness argument (its signature is fixed by the daemon's
-# contract). Matches Venator's own default staged brightness.
+# Used for the commit command's brightness byte when send_frame()
+# doesn't take a brightness argument (its signature is fixed by the
+# daemon's contract).
 DEFAULT_BRIGHTNESS = 200
 
-# ---- wire protocol constants (see venator.h) --------------------------
+# ---- wire protocol constants -------------------------------------------
+# Byte VALUES are protocol facts, verified against real hardware and
+# cross-referenced between the two sources above. Names below are this
+# project's own -- see the module docstring.
 
-OP_BEGIN = 0x88          # no params; sent before every apply
-OP_MODE_ZONE = 0xB1      # select "simple" (zone/static) mode; no params
-OP_MODE_PERKEY = 0x12    # select per-key mode; p3 = SCOPE_PERKEY
-OP_SET_COLOR = 0x14      # p3,p4,p5 = R,G,B
-OP_APPLY = 0x08          # p1=SUB_APPLY p2=EFF p3=MODE_TAG p4=BRIGHT p5=SCOPE p6=FLAG
+CMD_HANDSHAKE = 0x88            # no params; sent before every commit
+CMD_SELECT_SIMPLE_MODE = 0xB1   # select "simple" (zone/static) mode; no params
+CMD_SELECT_PERKEY_MODE = 0x12   # select per-key mode; p3 = TARGET_PERKEY
+CMD_WRITE_COLOR = 0x14          # p3,p4,p5 = R,G,B
+CMD_COMMIT = 0x08               # p1=COMMIT_ACTION_APPLY p2=EFFECT p3=COMMIT_RESERVED_TAG p4=BRIGHTNESS p5=TARGET p6=COMMIT_PERSIST_FLAG
 
-SUB_APPLY = 0x02
-MODE_TAG = 0x05          # unknown semantic, always 0x05 in every capture
-FLAG_DEFAULT = 0x01      # probably "save to flash"; always 0x01 in every capture
+COMMIT_ACTION_APPLY = 0x02
+COMMIT_RESERVED_TAG = 0x05      # unknown semantic, always 0x05 in every capture
+COMMIT_PERSIST_FLAG = 0x01      # probably "save to flash"; always 0x01 in every capture
 
-EFF_STATIC = 0x01
-EFF_PERKEY = 0x33
+EFFECT_SOLID = 0x01
+EFFECT_PERKEY_BUFFER = 0x33
 
-SCOPE_ZONE = 0x01
-SCOPE_PERKEY = 0x08
+TARGET_ZONE = 0x01
+TARGET_PERKEY = 0x08
 
 
 def _checksum(body: bytes) -> int:
@@ -139,14 +151,14 @@ class Keyboard:
 
     def set_static_color(self, r: int, g: int, b: int, brightness: int = 255):
         """Solid color across the whole keyboard. This is a 4-command
-        sequence (BEGIN, select zone mode, set color, apply) -- a
-        single feature report is not sufficient; that's how
+        sequence (handshake, select zone mode, write color, commit) --
+        a single feature report is not sufficient; that's how
         PredatorSense itself drives this mode."""
-        self._send_command(OP_BEGIN)
-        self._send_command(OP_MODE_ZONE)
-        self._send_command(OP_SET_COLOR, 0, 0, r, g, b, 0)
-        self._send_command(OP_APPLY, SUB_APPLY, EFF_STATIC, MODE_TAG,
-                            brightness, SCOPE_ZONE, FLAG_DEFAULT)
+        self._send_command(CMD_HANDSHAKE)
+        self._send_command(CMD_SELECT_SIMPLE_MODE)
+        self._send_command(CMD_WRITE_COLOR, 0, 0, r, g, b, 0)
+        self._send_command(CMD_COMMIT, COMMIT_ACTION_APPLY, EFFECT_SOLID, COMMIT_RESERVED_TAG,
+                            brightness, TARGET_ZONE, COMMIT_PERSIST_FLAG)
 
     def send_frame(self, colors):
         """Push a full per-key frame. `colors` must be a sequence of
@@ -160,8 +172,8 @@ class Keyboard:
             offset = i * BYTES_PER_CELL
             buf[offset:offset + 4] = bytes([0x00, r, g, b])
 
-        self._send_command(OP_BEGIN)
-        self._send_command(OP_MODE_PERKEY, 0, 0, SCOPE_PERKEY, 0, 0, 0)
+        self._send_command(CMD_HANDSHAKE)
+        self._send_command(CMD_SELECT_PERKEY_MODE, 0, 0, TARGET_PERKEY, 0, 0, 0)
 
         # Eight raw 64-byte interrupt-OUT packets. Each still needs the
         # same leading 0x00 hidapi report-ID byte as the feature reports
@@ -173,5 +185,5 @@ class Keyboard:
             chunk = bytes(buf[start:start + FRAME_PACKET_SIZE])
             self._dev.write(bytes([0x00]) + chunk)
 
-        self._send_command(OP_APPLY, SUB_APPLY, EFF_PERKEY, MODE_TAG,
-                            DEFAULT_BRIGHTNESS, SCOPE_PERKEY, FLAG_DEFAULT)
+        self._send_command(CMD_COMMIT, COMMIT_ACTION_APPLY, EFFECT_PERKEY_BUFFER, COMMIT_RESERVED_TAG,
+                            DEFAULT_BRIGHTNESS, TARGET_PERKEY, COMMIT_PERSIST_FLAG)

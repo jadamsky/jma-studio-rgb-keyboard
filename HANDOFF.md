@@ -520,6 +520,70 @@ triggers some window-system initialization), (c) confirm via
 icon cache being stale from earlier test runs under the old (no-AUMID)
 code.
 
+## GitHub backup (private repo, license/attribution cleanup)
+
+The user wants this repo pushed to GitHub purely as a personal
+disaster-recovery backup ("if I ever have to wipe this computer") --
+private for now, but with proper attribution/licensing in place in
+case it's ever made public later. This prompted a real find: `hardware/
+device.py`'s wire-protocol constants (`OP_BEGIN`, `OP_MODE_ZONE`,
+`SUB_APPLY`, `MODE_TAG`, `EFF_STATIC`, `SCOPE_PERKEY`, etc.) weren't
+just using the same byte VALUES as the Venator reference project (a
+fact, not copyrightable) -- they used Venator's exact constant NAMES
+too, which is a much closer relationship than "independently derived
+from the same protocol." Checked: Venator is GPL-2.0-only,
+Order52/ph16-71-rgb is GPL-3.0.
+
+**Fix applied**: renamed every wire-protocol constant in
+`hardware/device.py` to an independently-chosen name (`CMD_HANDSHAKE`,
+`CMD_SELECT_SIMPLE_MODE`, `CMD_SELECT_PERKEY_MODE`, `CMD_WRITE_COLOR`,
+`CMD_COMMIT`, `COMMIT_ACTION_APPLY`, `COMMIT_RESERVED_TAG`,
+`COMMIT_PERSIST_FLAG`, `EFFECT_SOLID`, `EFFECT_PERKEY_BUFFER`,
+`TARGET_ZONE`, `TARGET_PERKEY`) while keeping every numeric byte value
+byte-for-byte identical -- confirmed via a live restart + preset apply
+with no HID write errors afterward, so this was a pure rename, not a
+behavior change. Nothing outside `hardware/device.py` referenced the
+old names (checked via grep first). This fully decouples the code from
+any naming/structure relationship to the GPL sources; only the
+protocol facts (unavoidable and not copyrightable) remain shared.
+
+**New files**:
+- `LICENSE` -- MIT, copyright Jake Adamsky, with a short pointer at the
+  bottom to CREDITS.md for the third-party/GPL-derivation nuance.
+- `CREDITS.md` -- full attribution for Venator, Order52/ph16-71-rgb,
+  and hidapi (checked hidapi's actual license via its GitHub repo/
+  README: choice of GPL-3.0 / BSD-3-Clause / the original permissive
+  HIDAPI license), plus an explicit "what was and wasn't reused"
+  section, and an explicit statement that this was built agentically
+  with Claude to solve a specific PredatorSense limitation (the user
+  explicitly asked for this to be stated clearly).
+- `hidapi.dll` bundled at the repo root (copied from `.venv\Scripts\`)
+  -- the `hid` pip package is a ctypes wrapper and does NOT install
+  this native library itself; bundling it means a disaster-recovery
+  setup doesn't depend on some external download link still working
+  years from now.
+- `setup.ps1` -- one-time fresh-machine setup automation: creates
+  `.venv`, installs `requirements.txt`, copies `hidapi.dll` into
+  `.venv\Scripts\`, creates the Desktop shortcut (with the app icon),
+  and registers the "JMA Studio Autostart" Scheduled Task -- i.e. the
+  full manual setup this session did by hand earlier, now scripted.
+  Self-elevates once (same pattern as `start_all.ps1`) since task
+  registration needs admin.
+- `README.md` fully rewritten (the old one was a stale "starter
+  scaffold" doc predating almost all of the actual work) -- current
+  feature list, hardware requirement, install instructions (both the
+  `setup.ps1` quick path and a manual step-by-step), usage, current
+  architecture, and pointers to CREDITS.md/LICENSE.
+
+**GitHub CLI**: `gh` wasn't installed; installed via
+`winget install --id GitHub.cli`. The user then ran `gh auth login`
+themselves (deliberately not asking them to paste a token into chat).
+
+**Repo visibility**: private, per explicit user choice, "but setup a
+proper license incase I want to go public later" -- which is exactly
+why the constant-renaming and CREDITS.md work above happened before
+the push rather than being skipped as unnecessary for a private repo.
+
 ## Not done / possible next steps (nothing promised, just noted)
 
 - Standalone `.exe` build (PyInstaller or similar) for a real Windows
