@@ -67,6 +67,7 @@ import math
 import os
 
 from effects.layout import cell_positions
+from effects.noise import pseudo_random01
 
 NAME = "typing_reactive"
 
@@ -96,16 +97,6 @@ _POSITIONS = cell_positions(_KEYMAP_PATH)
 def _unit(vec):
     length = math.hypot(vec[0], vec[1])
     return (vec[0] / length, vec[1] / length)
-
-
-def _pseudo_random(i, tick):
-    """Same cheap deterministic hash as puke.py -- each (cell, tick)
-    pair gets its own stable "random" hue, no external RNG needed."""
-    x = (i * 2654435761 + tick * 40503) & 0xFFFFFFFF
-    x ^= x >> 15
-    x = (x * 2246822519) & 0xFFFFFFFF
-    x ^= x >> 13
-    return (x & 0xFFFF) / 65536.0
 
 
 def _resolve_base_colors(t, num_cells, params):
@@ -227,7 +218,7 @@ def render(t, num_cells, params):
         if bv > 0 and bv >= fv:
             v = bv
             if bolt_style == "rainbow":
-                hue = _pseudo_random(i, tick)
+                hue = pseudo_random01(i, tick)
                 r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
                 target = (int(r * 255), int(g * 255), int(b * 255))
             else:

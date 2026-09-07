@@ -73,19 +73,30 @@ KEY_POSITIONS = {
 }
 
 
+def _load_keymap(keymap_path: str) -> dict:
+    try:
+        with open(keymap_path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
 def cell_positions(keymap_path: str) -> dict:
     """Returns {cell_index: (row, col)} by combining keymap.json's
     {index: name} with KEY_POSITIONS above. A name with no known
     position (shouldn't happen, but harmless if a future discovery
     adds one) is silently skipped rather than erroring."""
-    try:
-        with open(keymap_path) as f:
-            keymap = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        keymap = {}
     positions = {}
-    for idx, name in keymap.items():
+    for idx, name in _load_keymap(keymap_path).items():
         pos = KEY_POSITIONS.get(name)
         if pos is not None:
             positions[int(idx)] = pos
     return positions
+
+
+def name_to_index(keymap_path: str) -> dict:
+    """Returns {key name: cell_index} -- the inverse of keymap.json's
+    own {index: name} shape, for effects that look up a specific named
+    key (e.g. gradient.py's overrides, gaming_zone.py's WASD cluster)
+    rather than needing every cell's spatial position."""
+    return {name: int(idx) for idx, name in _load_keymap(keymap_path).items()}

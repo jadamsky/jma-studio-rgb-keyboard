@@ -37,6 +37,9 @@ _current_params = {"color": (0, 0, 0)}
 _start_time = time.monotonic()
 _input_listener = None
 _last_frame = []  # most recently rendered [r,g,b] per cell, for the GUI's live preview
+_last_sent_frame = None  # the frame actually written to hardware last, to skip redundant writes
+_frames_rendered = 0  # total render() calls since startup
+_frames_written = 0   # of those, how many actually differed and got sent to hardware
 
 
 def _load_effects():
@@ -110,7 +113,7 @@ async def startup():
 
 
 async def _render_loop(fps: int = 30):
-    global _last_frame
+    global _last_frame, _last_sent_frame, _frames_rendered, _frames_written
     interval = 1 / fps
     loop = asyncio.get_event_loop()
     while True:
@@ -121,18 +124,30 @@ async def _render_loop(fps: int = 30):
                 frame_params["key_state"] = _input_listener.snapshot(_KEY_STATE_MAX_AGE)
             colors = _effects[_current_effect](t, NUM_CELLS, frame_params)
             _last_frame = colors
-            try:
-                # Run the blocking HID write in a worker thread rather than
-                # inline on the event loop -- this is a real hardware write
-                # (syscall-level, milliseconds), and doing it synchronously
-                # here was suspected of stalling the event loop long enough
-                # (30x/sec) to starve the `keyboard` library's OS-level
-                # hook thread of GIL time, which made the typing-reactive
-                # chase stop responding whenever the GUI's frequent polling
-                # added extra threadpool contention.
-                await loop.run_in_executor(None, _keyboard.send_frame, colors)
-            except Exception as e:
-                print(f"[daemon] frame write failed: {e}")
+            _frames_rendered += 1
+            # Skip the actual USB write when the frame is visually
+            # identical to the last one actually sent -- a fully static
+            # effect (a flat gradient, "off", gaming_zone, ...) was
+            # otherwise re-sent 30x/sec forever, a constant stream of
+            # USB traffic for a keyboard that never visibly changes.
+            # Still recomputed every frame either way (cheap for every
+            # effect here), just not re-written to hardware when nothing
+            # actually changed.
+            if colors != _last_sent_frame:
+                try:
+                    # Run the blocking HID write in a worker thread rather than
+                    # inline on the event loop -- this is a real hardware write
+                    # (syscall-level, milliseconds), and doing it synchronously
+                    # here was suspected of stalling the event loop long enough
+                    # (30x/sec) to starve the `keyboard` library's OS-level
+                    # hook thread of GIL time, which made the typing-reactive
+                    # chase stop responding whenever the GUI's frequent polling
+                    # added extra threadpool contention.
+                    await loop.run_in_executor(None, _keyboard.send_frame, colors)
+                    _last_sent_frame = colors
+                    _frames_written += 1
+                except Exception as e:
+                    print(f"[daemon] frame write failed: {e}")
         await asyncio.sleep(interval)
 
 
@@ -181,6 +196,10 @@ async def status():
         "input_listener": (
             _input_listener.diagnostics() if _input_listener is not None else None
         ),
+        "render_stats": {
+            "frames_rendered": _frames_rendered,
+            "frames_written": _frames_written,
+        },
     }
 
 

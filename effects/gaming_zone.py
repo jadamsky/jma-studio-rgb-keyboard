@@ -9,8 +9,9 @@ params:
     dim_color    RGB tuple for everything else. Default off.
 """
 
-import json
 import os
+
+from effects.layout import name_to_index
 
 NAME = "gaming_zone"
 
@@ -20,19 +21,9 @@ DEFAULT_DIM = (0, 0, 0)
 
 _KEYMAP_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "keymap.json")
 
-
-def _load_indices_by_name():
-    try:
-        with open(_KEYMAP_PATH) as f:
-            keymap = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        keymap = {}
-    return {name: int(idx) for idx, name in keymap.items()}
-
-
 # Loaded once at import time, same as the daemon's own one-time effect
 # load at startup -- restart the daemon after editing keymap.json.
-_INDEX_BY_NAME = _load_indices_by_name()
+_INDEX_BY_NAME = name_to_index(_KEYMAP_PATH)
 
 
 def render(t, num_cells, params):

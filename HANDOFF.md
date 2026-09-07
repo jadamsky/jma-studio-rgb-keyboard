@@ -584,6 +584,186 @@ proper license incase I want to go public later" -- which is exactly
 why the constant-renaming and CREDITS.md work above happened before
 the push rather than being skipped as unnecessary for a private repo.
 
+## 12 new "quick effect" modules (researched, not invented)
+
+User asked for 10 popular RGB lighting effects "found online," with an
+explicit "if you find more than 10 please add them." Researched via
+WebSearch (Razer Chroma's effect list, Corsair iCUE, and especially
+WLED's wiki -- WLED being the most extensively documented open-source
+addressable-LED effect library, so the best source for well-known,
+genuinely community-loved effect names) rather than inventing effect
+names from scratch. Landed on 12, each a new `effects/*.py` file, all
+following the existing pure-`render()` contract -- **zero daemon or GUI
+code changes needed**, since new effects auto-register (`NAME` +
+`render()` convention) and automatically appear as Quick Effect chips
+(anything not in `app.js`'s `HIDDEN_FROM_CHIPS` set shows up, and none
+of these 12 needed a dedicated tuning panel):
+
+- `breathing.py` -- smooth single-color fade in/out (Corsair/Razer
+  staple).
+- `spectrum_cycle.py` -- whole board synced to the same hue, sweeping
+  the color wheel together (Razer "Spectrum Cycling"). Distinct from
+  the existing `rainbow.py`, which staggers hue by position for a
+  traveling wave instead.
+- `starlight.py` -- random keys softly twinkle in/out independently
+  against a dim background (Razer "Starlight"). Distinct from
+  `puke.py`'s fast chaotic hue-flicker -- this is slow, soft, and
+  monochrome by default.
+- `ripple.py` -- concentric rings continuously emanate from the
+  keyboard's center (WLED "Ripple"). Autonomous, not press-driven --
+  contrast with `typing_reactive.py`.
+- `fire.py` -- per-key flame flicker through a black->red->orange->
+  yellow-white palette (WLED's iconic "Fire 2012").
+- `rain.py` -- droplets fall down each column continuously, fading as
+  they go.
+- `comet.py` -- a bright head + fading tail sweeps left-to-right and
+  wraps around (WLED "Meteor").
+- `scanner.py` -- a single band ping-pongs back and forth (WLED "Scan"
+  / Knight Rider's KITT scanner).
+- `color_wipe.py` -- a color progressively fills the board, then the
+  next color wipes over it, cycling a palette (WLED "Wipe").
+- `confetti.py` -- random keys spark to a bright random hue and
+  quickly fade against a dim background (WLED "Confetti").
+- `aurora.py` -- slow overlapping sine waves through a green/blue/
+  purple palette, northern-lights style.
+- `pulse.py` -- sharp attack + fast decay brightness pulse on a beat,
+  optionally hue-cycling. Deliberately distinct from `breathing.py`'s
+  slow symmetric cosine fade.
+
+Effects needing spatial awareness (`ripple`, `rain`, `comet`,
+`scanner`, `color_wipe`, `aurora`) load `effects/layout.py`'s
+`_POSITIONS` at import time, same pattern as `gradient.py`/
+`typing_reactive.py`. Effects needing pseudo-randomness per cell
+(`starlight`, `fire`, `confetti`) reuse `puke.py`'s cheap deterministic
+hash trick (`hash(cell_index, salt) -> [0,1)`) rather than a stateful
+RNG, keeping `render()` a pure function of `(t, num_cells, params)`
+with no persisted state between frames -- consistent with every other
+effect in this codebase.
+
+**Verified**: (1) a direct Python check imported all 12 and called
+`render()` at six different `t` values with empty params, asserting
+correct list length and valid `(r,g,b)` tuples throughout; (2) cycled
+every one live through the real daemon/HID-write path for 0.5s each,
+checked logs for zero errors afterward; (3) confirmed via Playwright
+that all 12 render as clickable chips in the GUI's Quick Effects
+panel, with no GUI code changes required. Daemon restored to
+`gradient_only` afterward.
+
+## Full codebase audit + real gaming-overhead measurement
+
+User asked for a thorough clean/efficiency pass over the entire
+codebase, plus actual (not reasoned-about) testing of gaming overhead,
+explicitly authorizing temporary tool installs if needed. Read every
+`.py` file in the project end to end. Findings and fixes:
+
+**The big one -- an overhead fix that was discussed but never actually
+applied**: back in the original gaming-overhead conversation, I
+identified that `daemon/server.py`'s render loop unconditionally wrote
+every computed frame to the keyboard via USB, 30x/sec, forever --
+including for fully static effects (`gradient_only`, off, `gaming_zone`,
+...) whose output never changes. I proposed fixing it, the
+conversation moved on to other things, and it was **never implemented**
+-- confirmed by re-reading the file fresh this session. Fixed now:
+`_render_loop()` compares each computed frame to `_last_sent_frame`
+(plain list equality -- cheap, and correct regardless of object
+identity since effects build fresh lists/tuples every call) and skips
+`_keyboard.send_frame()` entirely when nothing changed. Still
+recomputes every frame either way (cheap for every effect here); only
+the actual hardware write is skipped. Added `_frames_rendered`/
+`_frames_written` counters exposed via `/status.render_stats` so this
+is now an observable, ongoing fact about the system rather than
+something only provable by one-off testing.
+
+**Verified this fix directly** (not just reasoned about): applied
+`gradient_only`, sampled `render_stats` before/after 3s -- renders kept
+advancing at the normal rate, **zero** additional frames written.
+Applied `rainbow` (continuously animating) the same way -- writes
+tracked renders almost 1:1 (64 of 65), confirming legitimately
+time-varying effects are completely unaffected.
+
+**Duplicated code, consolidated**:
+- The same 6-line pseudo-random hash (cell index + time-tick ->
+  deterministic float) was pasted into six separate files: `puke.py`,
+  `typing_reactive.py`, `starlight.py`, `fire.py`, `rain.py`,
+  `confetti.py`. Extracted to a new `effects/noise.py`
+  (`pseudo_random01(i, tick, salt=0)` -- the `salt` param is a superset
+  of every call site's shape, confirmed `salt=0` reproduces the
+  original two-term formula exactly since it contributes 0 to the sum).
+  Not an effect itself (no NAME/render), same as `layout.py` -- the
+  daemon's loader just imports and skips it.
+- `gradient.py` and `gaming_zone.py` each had their own copy of "load
+  keymap.json, invert it to {name: index}". Extracted to
+  `effects/layout.py`'s new `name_to_index()`, alongside the existing
+  `cell_positions()` it's a natural sibling of. (Deliberately did NOT
+  touch `daemon/input_listener.py`'s own near-identical copy -- that
+  file has an explicit stated design principle of staying maximally
+  self-contained since it's the one file touching the OS keyboard hook;
+  importing from `effects/` would be a backwards architectural
+  dependency for no real benefit.)
+
+**Read and found clean, no changes needed**: `hardware/device.py`
+(already refactored this session for the GitHub-backup constant
+renaming), `daemon/input_listener.py`, `cli.py`, `tray.py`, `gui.py`,
+`effects/layout.py`'s core logic, and every simple effect
+(`static`, `mask`, `probe`, `rainbow`, `custom_keys`).
+
+**Regression testing after the refactor**: cycled all 20 non-diagnostic
+effects live through the real daemon/HID-write path, zero errors in
+logs; full Playwright smoke test confirmed all 15 quick-effect chips,
+all 6 presets (including the user's own "Red Chase"), both keyboard
+previews (103 keys each), zero console errors.
+
+### Real gaming-overhead measurement (psutil, installed temporarily)
+
+Installed `psutil` into `.venv` for process-level CPU/thread/memory
+instrumentation -- **deliberately not added to `requirements.txt`**,
+same treatment as Playwright: a dev-only diagnostic tool, not a runtime
+dependency. Left installed in case future sessions need it again.
+
+Used `psutil.Process.cpu_percent()` sampling (correctly targeting the
+real uvicorn worker process, not the `.venv\Scripts\python.exe`
+launcher stub -- the exact two-PID gotcha this file already documents
+elsewhere, confirmed by finding a 4MB/1-thread process the first time
+and fixing the finder to pick the highest-thread-count match instead).
+Machine has 32 logical cores, so "% of one core" numbers below are the
+right way to read magnitude, not "% of system."
+
+| Scenario | Daemon avg CPU | Daemon max CPU |
+|---|---|---|
+| Idle, `gradient_only` (post-fix) | 1.4% | 9.4% |
+| `typing_reactive`, no presses (resting) | 0.5% | 9.1% |
+| `typing_reactive`, heavy synthetic mashing (~20 keys/sec) | 14.8% | 30.3% |
+| `puke` (worst-case: every cell changes every frame) | 1.4% | 6.2% |
+| GUI open + **focused**, idle | 6.9% | 24.3% |
+| GUI open + focused, heavy mashing | 29.0% | 40.6% |
+| GUI open + **unfocused** (minimized), idle | 2.6% | 15.6% |
+| GUI open + unfocused, heavy mashing | 19.2% | 45.4% |
+
+The GUI's own WebView2 child processes: **18.3%** combined CPU when
+the window is focused, dropping to **0.00%** when minimized/unfocused
+-- direct confirmation of Chromium's background-tab throttling kicking
+in, consistent with everything learned about focus-dependent behavior
+earlier in this project. This is the key honest point for "will this
+affect my gaming": **you cannot have both the game and the Studio
+window focused at once** -- while actually gaming, the Studio (if open
+at all) sits unfocused in the background, which is the ~19-20% daemon
+/ ~0% GUI row above, not the ~29-40% focused row. The focused numbers
+only apply if you've alt-tabbed away from the game to the Studio
+itself, i.e. not actually gaming at that moment.
+
+**Leak check**: 90 seconds of sustained aggressive mashing (~33
+keys/sec, faster than the earlier tests) -- daemon thread count stayed
+exactly 6 and RSS stayed exactly 50.8MB at every 15s checkpoint. No
+thread or memory growth under sustained load.
+
+**Bottom line**: even the single worst real number found (~29% of one
+core, GUI open AND focused AND heavy mashing simultaneously -- not a
+real gaming scenario) is under 1% of this 32-core machine's total
+capacity. The realistic worst case while actually gaming (Studio
+closed or open-but-unfocused, occasional heavy input) tops out around
+15-19% of one core. Daemon restored to `gradient_only` afterward; GUI
+test window closed.
+
 ## Not done / possible next steps (nothing promised, just noted)
 
 - Standalone `.exe` build (PyInstaller or similar) for a real Windows

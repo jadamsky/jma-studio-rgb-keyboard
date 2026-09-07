@@ -38,10 +38,9 @@ params:
                  intense against this keyboard's diffusers.
 """
 
-import json
 import os
 
-from effects.layout import cell_positions
+from effects.layout import cell_positions, name_to_index
 
 NAME = "gradient"
 
@@ -62,16 +61,7 @@ else:
     _MIN_COL, _MAX_COL = 0.0, 1.0
 
 
-def _load_index_by_name(keymap_path: str) -> dict:
-    try:
-        with open(keymap_path) as f:
-            keymap = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        keymap = {}
-    return {name: int(idx) for idx, name in keymap.items()}
-
-
-_INDEX_BY_NAME = _load_index_by_name(_KEYMAP_PATH)
+_INDEX_BY_NAME = name_to_index(_KEYMAP_PATH)
 
 
 def _zone_index(col, boundaries, num_zones):
