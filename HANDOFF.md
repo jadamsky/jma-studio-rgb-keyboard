@@ -445,6 +445,81 @@ rect via `GetWindowRect` -- landed at `Left=181, Top=0` against a
 width exactly 1100 as configured. Confirmed both flush-top and
 centered as intended.
 
+## Real app/window icon (finally solved the old "known hard limitation")
+
+Previously documented as a hard limitation: `pywebview`'s `icon=` param
+on `create_window()` only works on GTK/Qt, not Windows, so the app
+window had no real icon (generic default) unless compiled into a
+standalone `.exe`. Turns out that limitation was about
+`create_window()` specifically -- this pywebview version (6.2.1) added
+a *separate* `icon=` param on `webview.start()` that the WinForms
+backend actually does support on Windows (confirmed by reading
+`webview/platforms/winforms.py`: `self.Icon = Icon(_state['icon'])`).
+No standalone-`.exe` build needed after all.
+
+- `gui/make_app_icon.py`: new build script (same one-off-tool pattern
+  as `gui/make_logo.py`) generating `gui/app_icon.png` (1024px master)
+  and `gui/app_icon.ico` (multi-size: 16/32/48/64/128/256). Design: a
+  bold "J" monogram in the app's own blue -> purple -> pink accent
+  gradient (matching `gui/style.css`, not the wordmark's red/green/
+  blue, since this icon represents the whole app rather than a tray
+  glyph) with a soft blue glow, on the app's dark rounded-square
+  background. Distinct from `gui/logo.png` (still used for the tray
+  icon and in-app header) -- this one is specifically the window/
+  taskbar/Alt-Tab icon.
+- `gui.py`: `webview.start(icon=ICON_PATH)` where `ICON_PATH` points
+  at `gui/app_icon.ico` (falls back to `None` if the file's missing,
+  so a fresh checkout without having run the build script doesn't
+  crash, just shows the default icon).
+
+**Design iteration notes** (in case the icon needs revisiting): the
+glow went through several rounds before landing right --
+1. A gradient-colored glow (matching the letter's own fill) was too
+   subtle to read as a glow at all.
+2. A dilated, solid-color halo (`ImageFilter.MaxFilter` for a fixed-
+   width ring, minimal blur) was clearly visible even at 32px, but
+   looked like a hard outline/border rather than actual light.
+3. Final version: Gaussian blur, then `alpha * 2.2` clipped to 255
+   (saturates most of the blurred area to full opacity), then a small
+   second blur to soften the clip's own edge -- real glow softness at
+   1024px, still clearly a glow (not a fade to nothing, not a crisp
+   ring) at 48px and 32px. This is the balance actually confirmed
+   against real downscaled renders, not just the 1024px master --
+   worth re-checking at small sizes again if this ever gets tweaked
+   further, since the 1024px version alone is a misleading preview
+   (a glow that looks great at full res can vanish completely once
+   shrunk to a real icon size).
+
+**Verified live**: relaunched `gui.py`, took a real screenshot, and
+confirmed the titlebar shows the finished badge icon (not the generic
+default) at actual rendered size -- legible as the gradient "J" with
+its blue glow even that small.
+
+**Follow-up bug, fixed but NOT yet confirmed by the user**: title bar
+icon worked, but the user reported the taskbar button still didn't
+show it. This is a well-known separate issue -- the title bar draws
+straight from `Form.Icon`, but Windows identifies/groups taskbar
+buttons by the host process (`python.exe`) unless the process claims
+its own identity, so the taskbar can show `python.exe`'s own icon (or
+none) even though the window's own icon is set correctly. Fixed via
+`_set_app_identity()` in `gui.py`, called before any window is
+created: `ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID
+("JMA.Studio.RGBKeyboard")`. Could NOT self-verify this one -- the
+taskbar on this machine appears to be auto-hide, and moving the cursor
+via `Cursor.Position` (tried, to trigger the reveal) doesn't trigger
+Windows' real auto-hide animation the way physical mouse input does,
+so a screenshot never captured it. **Next session: confirm with the
+user whether the taskbar now shows the icon correctly** -- if not,
+next things to try: (a) an explicit `WM_SETICON` via `SendMessage` on
+top of the `Form.Icon` assignment (belt-and-suspenders, shouldn't be
+necessary per how WinForms is documented to work, but cheap to try),
+(b) check whether the AppUserModelID needs to be set even earlier
+(before `webview` itself is imported, in case importing it already
+triggers some window-system initialization), (c) confirm via
+`Get-StartApps`/`explorer.exe` restart whether this is just Windows'
+icon cache being stale from earlier test runs under the old (no-AUMID)
+code.
+
 ## Not done / possible next steps (nothing promised, just noted)
 
 - Standalone `.exe` build (PyInstaller or similar) for a real Windows

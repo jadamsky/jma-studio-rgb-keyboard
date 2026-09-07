@@ -137,6 +137,17 @@ main {
      fit the panel -- no fixed size here. */
 }
 
+/* Centers the main live-preview board horizontally within its panel
+   (it's a block div with an explicit pixel width narrower than the
+   panel on most window sizes, so it sat flush-left by default before
+   this). Scoped to #keyboard only, not the shared .keyboard class --
+   the Custom Key Colors editor grid (#ck-keyboard) wasn't part of this
+   request and keeps its previous flush-left alignment.
+   REVERT: delete this #keyboard rule to go back to flush-left. */
+#keyboard {
+  margin: 0 auto;
+}
+
 .key {
   position: absolute;
   border-radius: 5px;

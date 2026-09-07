@@ -11,6 +11,7 @@ Then:
 """
 
 import ctypes
+import os
 import sys
 
 import requests
@@ -20,6 +21,7 @@ BASE = "http://127.0.0.1:8420"
 
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 860
+ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui", "app_icon.ico")
 
 
 def daemon_reachable() -> bool:
@@ -41,11 +43,31 @@ def _initial_position():
     return x, 0
 
 
+def _set_app_identity():
+    """Without this, Windows' taskbar groups/identifies this window by
+    its host process (python.exe) rather than by the window itself --
+    the title bar draws straight from Form.Icon so it shows the right
+    icon regardless, but the taskbar button falls back to python.exe's
+    own icon (or none) for identity purposes. Giving the process its
+    own distinct AppUserModelID tells Windows to treat it as its own
+    application instead of generic python.exe, which is what actually
+    makes the taskbar button pick up the window's real icon. Must be
+    called before any window is created."""
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("JMA.Studio.RGBKeyboard")
+    except (AttributeError, OSError):
+        pass
+
+
 def main():
     if not daemon_reachable():
         print("Daemon not reachable at 127.0.0.1:8420 -- start it first:")
         print("  uvicorn daemon.server:app --port 8420")
         sys.exit(1)
+
+    _set_app_identity()
 
     x, y = _initial_position()
     webview.create_window(
@@ -54,7 +76,11 @@ def main():
         x=x, y=y,
         background_color="#0b0b12",
     )
-    webview.start()
+    # pywebview's create_window() has no working `icon` on Windows --
+    # this is set at start() instead, which the WinForms backend does
+    # support (Icon(_state['icon']) in webview/platforms/winforms.py).
+    icon = ICON_PATH if os.path.isfile(ICON_PATH) else None
+    webview.start(icon=icon)
 
 
 if __name__ == "__main__":
