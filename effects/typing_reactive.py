@@ -32,6 +32,15 @@ params:
     bolt_speed      grid units/second the bolt head travels. Default 12.
     bolt_tail       length in grid units of the fading tail behind the
                     bolt's head. Default 3.
+    bolt_max_distance   maximum straight-line distance (grid units,
+                    radial shape) or maximum projected distance along
+                    the ray (rays shape) a bolt is allowed to reach
+                    from its origin key -- caps how far the bloom
+                    travels outward, independent of bolt_speed/
+                    bolt_tail. Default 18.5, just past this keyboard's
+                    real ~18.24-unit corner-to-corner diagonal (esc to
+                    num_enter), so it doesn't constrain anything at the
+                    default -- full board reach -- unless lowered.
     bolt_tolerance  how far off the exact ray line (in grid units) a
                     cell can be and still count as "on" the bolt. Only
                     used when bolt_shape="rays". Default 0.75 --
@@ -40,6 +49,13 @@ params:
                     chaotic per-cell hue flicker, same noise formula as
                     puke.py, visible only where a bolt currently is).
     bolt_flicker_speed  hue flickers/second for "rainbow" style. Default 6.
+    bolt_reset      False (default) = mashing the same key repeatedly
+                    spawns one independent overlapping wave per press
+                    (each fades/travels on its own). True = a second
+                    press of a key whose previous bloom hasn't finished
+                    yet restarts that single bloom from scratch instead
+                    of adding another one on top -- only the single
+                    most recent press (per key) drives the flash/bolt.
 
 The in-place flash always uses bright_color regardless of bolt_style
 -- only the traveling bolts change appearance.
@@ -64,6 +80,7 @@ DEFAULT_BOLT_DIRECTIONS = [
 ]
 DEFAULT_BOLT_SPEED = 12.0
 DEFAULT_BOLT_TAIL = 3.0
+DEFAULT_BOLT_MAX_DISTANCE = 18.5
 DEFAULT_BOLT_TOLERANCE = 0.75
 DEFAULT_BOLT_SHAPE = "rays"
 DEFAULT_BOLT_STYLE = "solid"
@@ -119,9 +136,11 @@ def render(t, num_cells, params):
     bolt_directions = params.get("bolt_directions", DEFAULT_BOLT_DIRECTIONS)
     bolt_speed = params.get("bolt_speed", DEFAULT_BOLT_SPEED)
     bolt_tail = params.get("bolt_tail", DEFAULT_BOLT_TAIL)
+    bolt_max_distance = params.get("bolt_max_distance", DEFAULT_BOLT_MAX_DISTANCE)
     bolt_tolerance = params.get("bolt_tolerance", DEFAULT_BOLT_TOLERANCE)
     bolt_style = params.get("bolt_style", DEFAULT_BOLT_STYLE)
     bolt_flicker_speed = params.get("bolt_flicker_speed", DEFAULT_BOLT_FLICKER_SPEED)
+    bolt_reset = params.get("bolt_reset", False)
 
     # Tracked separately since a bolt can use a different color source
     # (rainbow noise) than the in-place flash (always bright_color).
@@ -130,27 +149,35 @@ def render(t, num_cells, params):
 
     # In-place flash for the pressed key itself. Each press fades
     # independently; if the same key was hit more than once recently,
-    # take whichever press is currently brightest.
+    # take whichever press is currently brightest -- unless bolt_reset
+    # is on, in which case only the single most recent press (smallest
+    # elapsed) counts, so a second hit restarts the flash from scratch
+    # instead of layering another one on top.
     if decay > 0:
         for idx, elapsed_list in key_state.items():
             idx = int(idx)
             if not (0 <= idx < num_cells):
                 continue
-            for elapsed in elapsed_list:
+            elapsed_values = [min(elapsed_list)] if bolt_reset else elapsed_list
+            for elapsed in elapsed_values:
                 v = max(0.0, 1.0 - elapsed / decay)
                 if v > flash_intensity[idx]:
                     flash_intensity[idx] = v
 
     # Chasing bolts outward from each press across the physical grid.
     # Each individual press spawns its own wave (not one per key), so
-    # mashing one key sends multiple overlapping bolts.
+    # mashing one key sends multiple overlapping bolts -- unless
+    # bolt_reset is on, in which case only the most recent press (per
+    # key) drives a bolt, so a second hit restarts that key's bloom
+    # instead of adding an overlapping second one.
     if bolts_enabled and bolt_tail > 0 and _POSITIONS:
         unit_dirs = [_unit(d) for d in bolt_directions] if bolt_shape == "rays" else None
         for origin_key, elapsed_list in key_state.items():
             origin_pos = _POSITIONS.get(int(origin_key))
             if origin_pos is None:
                 continue
-            for elapsed in elapsed_list:
+            elapsed_values = [min(elapsed_list)] if bolt_reset else elapsed_list
+            for elapsed in elapsed_values:
                 head_distance = elapsed * bolt_speed
                 for target_idx, target_pos in _POSITIONS.items():
                     dr = target_pos[0] - origin_pos[0]
@@ -162,7 +189,10 @@ def render(t, num_cells, params):
                         # True 360 degree ring: only straight-line
                         # distance from the origin matters, no fixed
                         # direction set at all.
-                        tail = head_distance - math.hypot(dr, dc)
+                        distance = math.hypot(dr, dc)
+                        if distance > bolt_max_distance:
+                            continue
+                        tail = head_distance - distance
                         if tail < 0 or tail > bolt_tail:
                             continue
                         v = 1.0 - (tail / bolt_tail)
@@ -176,7 +206,7 @@ def render(t, num_cells, params):
                     # tail behind the head.
                     for ur, uc in unit_dirs:
                         projection = dr * ur + dc * uc
-                        if projection <= 0:
+                        if projection <= 0 or projection > bolt_max_distance:
                             continue
                         perp = math.hypot(dr - projection * ur, dc - projection * uc)
                         if perp > bolt_tolerance:

@@ -50,7 +50,53 @@ const state = {
   defaultPreset: null,
   activePreset: null,  // name of the preset card currently considered "active", or null
   gradientExtra: null, // legacy 2-zone overrides (left_overrides/right_overrides/custom_colors) to preserve while live-tuning
+  ckCellEls: new Map(),      // index -> DOM element, for the Custom Key Colors editor grid
+  ckSelected: new Set(),     // indices currently selected in that editor
+  customKeyColors: {},       // {index (str): [r,g,b]} overrides being edited
+  customKeyDefault: [0, 0, 0],
+  recentColors: [],          // hex strings, most-recent first
 };
+
+const RECENT_COLORS_STORAGE_KEY = "jma_studio_recent_colors";
+const RECENT_COLORS_MAX = 16;
+
+function loadRecentColors() {
+  try {
+    const raw = localStorage.getItem(RECENT_COLORS_STORAGE_KEY);
+    state.recentColors = raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    state.recentColors = [];
+  }
+}
+
+function saveRecentColors() {
+  try {
+    localStorage.setItem(RECENT_COLORS_STORAGE_KEY, JSON.stringify(state.recentColors));
+  } catch (e) {
+    // private browsing / storage blocked -- recent colors just won't persist
+  }
+}
+
+function addRecentColor(hex) {
+  state.recentColors = [hex, ...state.recentColors.filter((c) => c !== hex)].slice(0, RECENT_COLORS_MAX);
+  saveRecentColors();
+  renderRecentColors();
+}
+
+function renderRecentColors() {
+  const row = document.getElementById("ck-recent-row");
+  const empty = document.getElementById("ck-recent-empty");
+  row.querySelectorAll(".ck-swatch").forEach((el) => el.remove());
+  empty.hidden = state.recentColors.length > 0;
+  for (const hex of state.recentColors) {
+    const swatch = document.createElement("button");
+    swatch.className = "ck-swatch";
+    swatch.style.background = hex;
+    swatch.title = hex;
+    swatch.addEventListener("click", () => applyColorToSelection(hex));
+    row.appendChild(swatch);
+  }
+}
 
 // Known wide keys, in grid units (matches effects/layout.py's stagger).
 const KEY_WIDTH = {
@@ -98,11 +144,15 @@ function friendlyLabel(name) {
 
 // ---- keyboard preview ----------------------------------------------------
 
-function buildKeyboard(cells) {
-  const board = document.getElementById("keyboard");
-  const panel = board.closest(".preview-panel");
+// Shared by the live-preview board and the Custom Key Colors editor
+// grid -- both lay out the same physical key positions, just into
+// different containers with different per-cell behavior (live color
+// polling vs. click-to-select).
+function buildKeyboardGrid(cells, boardId, cellElsMap, decorateCell) {
+  const board = document.getElementById(boardId);
+  const panel = board.closest(".panel");
   board.innerHTML = "";
-  state.cellEls.clear();
+  cellElsMap.clear();
 
   let maxCol = 0, maxRow = 0;
   for (const c of cells) {
@@ -134,8 +184,13 @@ function buildKeyboard(cells) {
     el.style.height = `${height}px`;
     el.style.fontSize = `${Math.max(7, Math.min(11, unit * 0.28))}px`;
     board.appendChild(el);
-    state.cellEls.set(c.index, el);
+    cellElsMap.set(c.index, el);
+    if (decorateCell) decorateCell(el, c);
   }
+}
+
+function buildKeyboard(cells) {
+  buildKeyboardGrid(cells, "keyboard", state.cellEls);
 }
 
 async function pollFrame() {
@@ -149,6 +204,146 @@ async function pollFrame() {
   } catch (e) {
     // daemon not reachable this tick -- try again next poll
   }
+}
+
+// ---- custom key colors editor --------------------------------------------
+
+function buildCustomKeyboard(cells) {
+  buildKeyboardGrid(cells, "ck-keyboard", state.ckCellEls, (el, c) => {
+    el.addEventListener("click", (e) => {
+      toggleKeySelection(c.index, e.shiftKey || e.ctrlKey || e.metaKey);
+    });
+  });
+  renderCustomKeyboardColors();
+  updateSelectionVisual();
+}
+
+function renderCustomKeyboardColors() {
+  const [dr, dg, db] = state.customKeyDefault;
+  for (const [idxStr, el] of state.ckCellEls) {
+    const override = state.customKeyColors[idxStr];
+    const [r, g, b] = override || [dr, dg, db];
+    el.style.backgroundColor = `rgb(${r},${g},${b})`;
+  }
+}
+
+function currentColorForIndex(idxStr) {
+  return state.customKeyColors[idxStr] || state.customKeyDefault;
+}
+
+function updateSelectionVisual() {
+  for (const [idxStr, el] of state.ckCellEls) {
+    el.classList.toggle("selected", state.ckSelected.has(idxStr));
+  }
+  const count = state.ckSelected.size;
+  const label = document.getElementById("ck-selection-label");
+  const picker = document.getElementById("ck-picker");
+  if (count === 0) {
+    label.textContent = "No keys selected -- click a key to select it (shift-click to add more)";
+    picker.disabled = true;
+  } else {
+    const names = [...state.ckSelected]
+      .map((idxStr) => state.cells.find((c) => String(c.index) === idxStr))
+      .filter(Boolean)
+      .map((c) => friendlyLabel(c.name) || c.name);
+    label.textContent = count === 1
+      ? `Selected: ${names[0]}`
+      : `Selected ${count} keys: ${names.slice(0, 6).join(", ")}${count > 6 ? ", ..." : ""}`;
+    picker.disabled = false;
+    // Reflect the (first) selected key's actual current color -- an
+    // already-painted key shows its own color when selected, rather
+    // than the picker holding onto whatever was last applied elsewhere.
+    picker.value = rgbToHex(currentColorForIndex([...state.ckSelected][0]));
+  }
+}
+
+function toggleKeySelection(idx, additive) {
+  const idxStr = String(idx);
+  if (!additive) {
+    const wasOnlySelected = state.ckSelected.size === 1 && state.ckSelected.has(idxStr);
+    state.ckSelected.clear();
+    if (!wasOnlySelected) state.ckSelected.add(idxStr);
+  } else if (state.ckSelected.has(idxStr)) {
+    state.ckSelected.delete(idxStr);
+  } else {
+    state.ckSelected.add(idxStr);
+  }
+  updateSelectionVisual();
+}
+
+function applyColorToSelection(hex) {
+  if (state.ckSelected.size === 0) return;
+  const rgb = hexToRgb(hex);
+  for (const idxStr of state.ckSelected) {
+    state.customKeyColors[idxStr] = rgb;
+  }
+  document.getElementById("ck-picker").value = hex;
+  addRecentColor(hex);
+  renderCustomKeyboardColors();
+  applyCustomKeysLive();
+}
+
+function readCustomKeysParams() {
+  return {
+    colors: state.customKeyColors,
+    default_color: state.customKeyDefault,
+  };
+}
+
+const applyCustomKeysLive = debounce(async () => {
+  if (!document.getElementById("ck-live").checked) return;
+  await post("/effect", { name: "custom_keys", params: readCustomKeysParams() });
+  state.activePreset = null;
+  await renderPresets();
+}, 120);
+
+function wireCustomKeysPanel() {
+  document.getElementById("ck-picker").addEventListener("input", (e) => {
+    applyColorToSelection(e.target.value);
+  });
+  document.getElementById("ck-default-color").addEventListener("input", (e) => {
+    state.customKeyDefault = hexToRgb(e.target.value);
+    renderCustomKeyboardColors();
+    applyCustomKeysLive();
+  });
+  document.getElementById("ck-select-all").addEventListener("click", () => {
+    state.ckSelected = new Set(state.cells.map((c) => String(c.index)));
+    updateSelectionVisual();
+  });
+  document.getElementById("ck-select-none").addEventListener("click", () => {
+    state.ckSelected.clear();
+    updateSelectionVisual();
+  });
+  document.getElementById("ck-reset-selected").addEventListener("click", () => {
+    for (const idxStr of state.ckSelected) delete state.customKeyColors[idxStr];
+    renderCustomKeyboardColors();
+    applyCustomKeysLive();
+  });
+  document.getElementById("ck-clear-all").addEventListener("click", () => {
+    if (!confirm("Clear all custom key colors?")) return;
+    state.customKeyColors = {};
+    renderCustomKeyboardColors();
+    applyCustomKeysLive();
+  });
+  document.getElementById("ck-pull-current").addEventListener("click", async () => {
+    // Snapshots whatever's actually lit right now (any effect -- a
+    // gradient, a preset, even mid-chase) into per-key overrides, so
+    // "set up a gradient, then pull it into custom and edit it" works
+    // as a starting point rather than starting from a blank board.
+    const frame = await get("/frame");
+    const colors = frame.colors || [];
+    const overrides = {};
+    for (const c of state.cells) {
+      const rgb = colors[c.index];
+      if (rgb) overrides[String(c.index)] = rgb;
+    }
+    state.customKeyColors = overrides;
+    renderCustomKeyboardColors();
+    applyCustomKeysLive();
+    toast("Pulled current keyboard colors into the custom editor");
+  });
+  loadRecentColors();
+  renderRecentColors();
 }
 
 // ---- hardware status -----------------------------------------------------
@@ -174,10 +369,18 @@ function presetSwatch(preset) {
     return `linear-gradient(90deg, ${hexColors.join(", ")})`;
   }
   if (preset.effect === "typing_reactive") {
-    const base = p.base_effect === "gradient"
-      ? presetSwatch({ effect: "gradient", params: p.base_params || {} })
-      : rgbToHex(p.base_color || [38, 38, 38]);
-    return base;
+    if (p.base_effect === "gradient") {
+      return presetSwatch({ effect: "gradient", params: p.base_params || {} });
+    }
+    if (p.base_effect === "custom_keys") {
+      return presetSwatch({ effect: "custom_keys", params: p.base_params || {} });
+    }
+    return rgbToHex(p.base_color || [38, 38, 38]);
+  }
+  if (preset.effect === "custom_keys") {
+    const overrideHexes = Object.values(p.colors || {}).slice(0, 5).map(rgbToHex);
+    const stops = [rgbToHex(p.default_color || [0, 0, 0]), ...overrideHexes];
+    return stops.length > 1 ? `linear-gradient(90deg, ${stops.join(", ")})` : stops[0];
   }
   return "linear-gradient(90deg, #333, #333)";
 }
@@ -236,7 +439,7 @@ async function applyPreset(name) {
 
 // ---- quick effect chips ----------------------------------------------------
 
-const HIDDEN_FROM_CHIPS = new Set(["probe", "mask", "gradient", "typing_reactive", "static"]);
+const HIDDEN_FROM_CHIPS = new Set(["probe", "mask", "gradient", "typing_reactive", "static", "custom_keys"]);
 
 function renderEffectChips() {
   const grid = document.getElementById("effect-grid");
@@ -395,11 +598,16 @@ function readTypingReactiveParams() {
     bolt_style: document.getElementById("tr-style").value,
     bolt_speed: parseFloat(document.getElementById("tr-speed").value),
     bolt_tail: parseFloat(document.getElementById("tr-tail").value),
+    bolt_max_distance: parseFloat(document.getElementById("tr-maxdist").value),
+    bolt_reset: document.getElementById("tr-bolt-reset").checked,
     bolt_flicker_speed: parseFloat(document.getElementById("tr-flicker").value),
   };
   if (document.getElementById("tr-use-gradient").checked) {
     params.base_effect = "gradient";
     params.base_params = readGradientParams();
+  } else if (document.getElementById("tr-use-custom-keys").checked) {
+    params.base_effect = "custom_keys";
+    params.base_params = readCustomKeysParams();
   } else {
     params.base_color = hexToRgb(document.getElementById("tr-base").value);
   }
@@ -410,8 +618,10 @@ function updateTypingReactiveLabels() {
   document.getElementById("tr-decay-val").textContent = document.getElementById("tr-decay").value + "s";
   document.getElementById("tr-speed-val").textContent = document.getElementById("tr-speed").value;
   document.getElementById("tr-tail-val").textContent = document.getElementById("tr-tail").value;
+  document.getElementById("tr-maxdist-val").textContent = document.getElementById("tr-maxdist").value;
   document.getElementById("tr-flicker-val").textContent = document.getElementById("tr-flicker").value;
-  document.getElementById("tr-base-color-field").hidden = document.getElementById("tr-use-gradient").checked;
+  document.getElementById("tr-base-color-field").hidden =
+    document.getElementById("tr-use-gradient").checked || document.getElementById("tr-use-custom-keys").checked;
   document.getElementById("tr-flicker-field").hidden = document.getElementById("tr-style").value !== "rainbow";
   document.getElementById("tr-reactive-fields").hidden = !document.getElementById("tr-enabled").checked;
 }
@@ -429,6 +639,8 @@ async function applyCurrentLive() {
     await post("/effect", { name: "typing_reactive", params: readTypingReactiveParams() });
   } else if (document.getElementById("tr-use-gradient").checked) {
     await post("/effect", { name: "gradient", params: readGradientParams() });
+  } else if (document.getElementById("tr-use-custom-keys").checked) {
+    await post("/effect", { name: "custom_keys", params: readCustomKeysParams() });
   } else {
     await post("/effect", { name: "static", params: { color: hexToRgb(document.getElementById("tr-base").value) } });
   }
@@ -442,13 +654,29 @@ const applyTypingReactiveLive = debounce(async () => {
 }, 120);
 
 function wireTypingReactivePanel() {
-  const ids = ["tr-enabled", "tr-use-gradient", "tr-base", "tr-bright", "tr-decay", "tr-shape", "tr-style", "tr-speed", "tr-tail", "tr-flicker"];
+  const ids = ["tr-enabled", "tr-bolt-reset", "tr-base", "tr-bright", "tr-decay", "tr-shape", "tr-style", "tr-speed", "tr-tail", "tr-maxdist", "tr-flicker"];
   for (const id of ids) {
     document.getElementById(id).addEventListener("input", () => {
       updateTypingReactiveLabels();
       applyTypingReactiveLive();
     });
   }
+
+  // "Use Gradient panel as background" and "Use Custom Key Colors as
+  // background" are mutually exclusive -- checking one always unchecks
+  // the other, so base_effect (a single string on the daemon side) is
+  // never ambiguous. Both unchecked falls back to the flat base color.
+  document.getElementById("tr-use-gradient").addEventListener("input", (e) => {
+    if (e.target.checked) document.getElementById("tr-use-custom-keys").checked = false;
+    updateTypingReactiveLabels();
+    applyTypingReactiveLive();
+  });
+  document.getElementById("tr-use-custom-keys").addEventListener("input", (e) => {
+    if (e.target.checked) document.getElementById("tr-use-gradient").checked = false;
+    updateTypingReactiveLabels();
+    applyTypingReactiveLive();
+  });
+
   updateTypingReactiveLabels();
 }
 
@@ -461,6 +689,15 @@ function syncTuningPanelsFromPreset(preset) {
 
   document.getElementById("tr-enabled").checked = preset.effect === "typing_reactive";
 
+  if (preset.effect === "custom_keys") {
+    state.customKeyColors = { ...(p.colors || {}) };
+    state.customKeyDefault = p.default_color || [0, 0, 0];
+    document.getElementById("ck-default-color").value = rgbToHex(state.customKeyDefault);
+    state.ckSelected.clear();
+    renderCustomKeyboardColors();
+    updateSelectionVisual();
+  }
+
   if (preset.effect === "gradient") {
     gradientParams = p;
   } else if (preset.effect === "typing_reactive") {
@@ -470,12 +707,22 @@ function syncTuningPanelsFromPreset(preset) {
     document.getElementById("tr-style").value = p.bolt_style || "solid";
     document.getElementById("tr-speed").value = p.bolt_speed ?? 12;
     document.getElementById("tr-tail").value = p.bolt_tail ?? 3;
+    document.getElementById("tr-maxdist").value = p.bolt_max_distance ?? 18.5;
+    document.getElementById("tr-bolt-reset").checked = p.bolt_reset ?? false;
     document.getElementById("tr-flicker").value = p.bolt_flicker_speed ?? 6;
+    document.getElementById("tr-use-gradient").checked = p.base_effect === "gradient";
+    document.getElementById("tr-use-custom-keys").checked = p.base_effect === "custom_keys";
     if (p.base_effect === "gradient") {
-      document.getElementById("tr-use-gradient").checked = true;
       gradientParams = p.base_params || {};
+    } else if (p.base_effect === "custom_keys") {
+      const bp = p.base_params || {};
+      state.customKeyColors = { ...(bp.colors || {}) };
+      state.customKeyDefault = bp.default_color || [0, 0, 0];
+      document.getElementById("ck-default-color").value = rgbToHex(state.customKeyDefault);
+      state.ckSelected.clear();
+      renderCustomKeyboardColors();
+      updateSelectionVisual();
     } else {
-      document.getElementById("tr-use-gradient").checked = false;
       document.getElementById("tr-base").value = rgbToHex(p.base_color || [38, 38, 38]);
     }
   }
@@ -638,6 +885,7 @@ async function init() {
   const layout = await get("/layout");
   state.cells = layout.cells;
   buildKeyboard(state.cells);
+  buildCustomKeyboard(state.cells);
 
   const effectsData = await get("/effects");
   state.effects = effectsData.available;
@@ -647,6 +895,7 @@ async function init() {
   renderEffectChips();
   wireGradientPanel();
   wireTypingReactivePanel();
+  wireCustomKeysPanel();
   wireFooter();
   wireKeypressForwarding();
   await refreshStatus();
@@ -654,7 +903,10 @@ async function init() {
   setInterval(pollFrame, 50);
   setInterval(refreshStatus, 3000);
 
-  window.addEventListener("resize", debounce(() => buildKeyboard(state.cells), 150));
+  window.addEventListener("resize", debounce(() => {
+    buildKeyboard(state.cells);
+    buildCustomKeyboard(state.cells);
+  }, 150));
 }
 
 init().catch((e) => {

@@ -262,6 +262,189 @@ both DOM state and the daemon's real `/status`/`/presets` endpoints.
   constantly, as long as the end state is verified and clearly
   reported.
 
+## Custom Key Colors editor (new panel)
+
+A fully manual per-key painter, for cases the other effects don't
+cover -- pick any individual key (or several at once) and give it its
+own exact color, independent of gradient zones or reactive typing.
+
+- `effects/custom_keys.py`: the simplest possible layered effect --
+  `colors` (dict of `{cell index (str): [r,g,b]}`) overrides,
+  everything else falls back to `default_color` (default off). No
+  daemon changes needed at all; it auto-registers via the existing
+  `NAME`+`render()` convention, same as every other effect.
+- `gui/app.js`/`index.html`/`style.css`: new "Custom Key Colors" panel
+  with its own keyboard grid (`buildKeyboardGrid()` was factored out of
+  `buildKeyboard()` so both the live-preview board and this editor grid
+  share the same layout math, just with different per-cell behavior).
+  Click a key to select it, shift/ctrl-click to multi-select, then use
+  the color picker to paint every selected key at once -- this is the
+  "replicate the same color over multiple keys" workflow. "Select all"
+  /"Deselect"/"Reset selected"/"Clear all" round out the editing
+  actions. A "Default" color picker sets the fallback for un-painted
+  keys.
+- **Recently-used colors**: every applied color (via the picker or a
+  recent swatch) gets pushed to a `.ck-swatch` row (dedup, cap 16),
+  persisted in `localStorage` (`jma_studio_recent_colors`) -- clicking
+  a swatch instantly reapplies that color to the current selection,
+  which is the fast-reuse path the user specifically asked for. Lives
+  in the browser profile, not synced anywhere -- redundant with actual
+  saved presets, and fine to lose (it's just a shortcut, not data).
+- `custom_keys` is excluded from the quick-effect chips
+  (`HIDDEN_FROM_CHIPS`) like the other panel-driven effects, and
+  `syncTuningPanelsFromPreset()`/`presetSwatch()` both got a
+  `custom_keys` branch so saving/reapplying a preset built with this
+  editor round-trips correctly (verified live below).
+- Follows the same `#ck-live` "Apply live" checkbox convention as the
+  other tuning panels, debounced the same way.
+
+**Verified live** via Playwright (`test_custom_keys.py` and
+`test_custom_keys_preset.py`, scratchpad-only): single-key paint,
+shift-click multi-select paint (confirms additive selection, not
+replace -- matches normal OS multi-select conventions), recent-swatch
+reapply, reset-selected, clear-all (each checked against the daemon's
+real `/status`, not just DOM state), and a full save-preset ->
+switch-away -> reapply round trip confirming both the daemon's params
+and the editor grid's visual re-render came back correctly. No console
+errors in any run.
+
+**"Pull current colors" button** (added right after): snapshots
+whatever's actually lit right now -- any effect, not just gradient --
+via `GET /frame`, into per-key overrides for every mapped cell, then
+switches to `custom_keys` with that snapshot. This is the "set up a
+gradient, then pull it into custom and edit it" workflow. Verified via
+Playwright (`test_pull_current.py`): applied `gradient_only`, captured
+`/frame`'s actual per-cell colors (post-brightness-scaling), clicked
+the button, and confirmed both the daemon's `params.colors` and the
+editor grid's rendered background matched the live frame exactly for
+sampled keys.
+
+## Custom Key Colors editor follow-ups (added right after)
+
+Two refinements requested once the panel was in use:
+
+1. **The "Paint" picker (`#ck-picker`) now tracks the selected key's
+   actual current color** instead of holding onto whatever was last
+   applied. `currentColorForIndex(idxStr)` (override, or
+   `customKeyDefault` if none) is read in `updateSelectionVisual()`
+   and written into the picker's value every time selection changes --
+   so selecting an already-painted key immediately shows its real
+   color, ready to nudge from there, rather than starting blind. With
+   a multi-selection, it shows the first-selected key's color (a
+   reasonable simplification -- no "mixed colors" indicator).
+
+2. **`typing_reactive` can now use Custom Key Colors as its background**,
+   not just Gradient or a flat color. New `#tr-use-custom-keys`
+   checkbox next to the existing `#tr-use-gradient`, and the two are
+   **mutually exclusive by explicit wiring** (checking one force-
+   unchecks the other in `wireTypingReactivePanel()`) since
+   `base_effect` is a single string on the daemon side -- there's no
+   ambiguous state to represent. `readTypingReactiveParams()`,
+   `applyCurrentLive()` (both the reactive-on and reactive-off/flat-
+   background branches), `syncTuningPanelsFromPreset()`, and
+   `presetSwatch()` all got a third `base_effect === "custom_keys"`
+   branch alongside the existing `"gradient"` one. Both unchecked still
+   falls back to the flat `#tr-base` color, unchanged from before.
+
+**Verified live** via Playwright (`test_ckpicker_and_trbg.py`,
+scratchpad-only): picker-tracks-selection for both an unpainted key
+(shows default) and a painted one (shows its real color); checking
+`#tr-use-custom-keys` unchecks `#tr-use-gradient` and immediately
+switches the daemon's live `base_effect` to `custom_keys` (confirmed
+via `/status`, including the actual painted color coming through in
+`base_params.colors`), and checking `#tr-use-gradient` back correctly
+un-checks the other and flips `base_effect` back; a full save-preset ->
+switch-away -> reapply round trip confirmed both checkboxes and the
+daemon's params come back correctly. No console errors.
+
+## Bloom max distance slider (typing_reactive)
+
+New `bolt_max_distance` param on `effects/typing_reactive.py`: caps how
+far a bolt is allowed to travel from its origin key, independent of
+`bolt_speed`/`bolt_tail` (which govern travel rate and fade length, not
+reach). Cells farther than this -- straight-line distance for
+`bolt_shape="radial"`, projected distance along the ray for
+`"rays"` -- never light up regardless of elapsed time. Default 35,
+comfortably beyond this keyboard's ~20-unit diagonal, so existing
+presets that don't set it are visually unaffected.
+
+GUI: new "Bloom max distance" slider in the Reactive Typing panel,
+`min=0 max=35 step=0.5`, wired through `readTypingReactiveParams()` /
+`updateTypingReactiveLabels()` / `wireTypingReactivePanel()`'s ids
+array / `syncTuningPanelsFromPreset()`, same pattern as the other
+bolt-tuning sliders.
+
+**Finalized at max=18.5** after the user tested it (originally shipped
+with a provisional max=35). Updated three places to match: `#tr-maxdist`'s
+`min`/`max`/`value` in `gui/index.html`, `syncTuningPanelsFromPreset()`'s
+fallback (`p.bolt_max_distance ?? 18.5`) in `gui/app.js`, and
+`DEFAULT_BOLT_MAX_DISTANCE` (now 18.5) in `effects/typing_reactive.py`.
+18.5 sits just past this keyboard's real ~18.24-unit corner-to-corner
+diagonal (esc to num_enter, computed from `effects/layout.py`'s actual
+positions) -- so the slider's max is "full board reach," not an
+arbitrary round number, and the default stays visually unconstrained
+for old presets that don't set this param.
+
+**Verified**: a direct Python test (not the GUI) confirmed the cap
+transitions correctly right at the real distance boundary for both
+`bolt_shape` values, using actual `effects/layout.py` positions (e.g.
+esc -> num_enter is really ~18.24 units; capped at 10 it doesn't light,
+capped at 19 it does). Also verified end-to-end through the GUI
+(scratchpad `test_bloom_slider.py`): slider default 35, live-apply
+correctly sets `bolt_max_distance` in the daemon's params, and a save/
+reapply preset round trip restores the slider's value correctly.
+
+## Reactive Typing panel: slider reorder + Bolt Reset
+
+- Reordered the four sliders so `tr-decay`, `tr-speed`, `tr-tail`,
+  `tr-maxdist` sit as one contiguous run (moved Flash decay to right
+  before Bolt speed, after the shape/style dropdowns, in
+  `gui/index.html`) -- previously the shape/style selects sat between
+  decay and the other three, splitting them up.
+- New `#tr-bolt-reset` ("Bolt Reset") checkbox next to `#tr-enabled`,
+  both non-wide `.field`s so they share a grid row.
+- New `bolt_reset` param on `effects/typing_reactive.py`: default
+  False keeps the existing behavior (mashing a key spawns one
+  independent overlapping wave per press). True collapses each key's
+  presses down to just the single most recent one (`min(elapsed_list)`)
+  for both the in-place flash and the bolt -- so a second press before
+  the first bloom finishes restarts it from scratch instead of adding
+  an overlapping second wave. Applied identically in both the flash
+  loop and the bolt loop (same `elapsed_values = [min(elapsed_list)]
+  if bolt_reset else elapsed_list` pattern in each).
+- GUI wiring follows the same pattern as every other typing_reactive
+  param: `readTypingReactiveParams()`, `wireTypingReactivePanel()`'s
+  ids array, `syncTuningPanelsFromPreset()`.
+
+**Verified**: a direct Python test fed `typing_reactive.render()` two
+presses of the same key (one 0.1s old, one 1.0s old, so their bolts sit
+at very different radii) -- with `bolt_reset=False` both rings lit
+(near ~0-1 units AND far ~7-9.7 units); with `bolt_reset=True` only the
+near ring lit, confirming the older press's wave was fully discarded,
+not just dimmed. Also verified end-to-end through the GUI
+(`test_layout_and_boltreset.py`, scratchpad): the four sliders render
+in the corrected contiguous order, the checkbox live-applies
+`bolt_reset` to the daemon, and it survives a save/reapply preset
+round trip.
+
+## GUI window starting position
+
+`gui.py` previously let pywebview pick the window's initial position,
+which landed too low on screen -- required a manual drag up every
+time. `_initial_position()` now computes `x` via
+`ctypes.windll.user32.GetSystemMetrics(0)` (primary screen width) to
+center the 1100px-wide window horizontally, and pins `y=0` (flush to
+the top), passed into `webview.create_window(..., x=x, y=y)`. Windows-
+only (`gui.py` is Windows-only anyway per the whole project -- guarded
+with `sys.platform != "win32"` returning `(None, None)`, pywebview's
+own default, just in case this ever runs elsewhere).
+
+**Verified live**: launched `gui.py` fresh and checked the real window
+rect via `GetWindowRect` -- landed at `Left=181, Top=0` against a
+1463px-wide screen (expected center ~182, off by one rounding pixel),
+width exactly 1100 as configured. Confirmed both flush-top and
+centered as intended.
+
 ## Not done / possible next steps (nothing promised, just noted)
 
 - Standalone `.exe` build (PyInstaller or similar) for a real Windows

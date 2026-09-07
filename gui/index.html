@@ -47,7 +47,7 @@
 
   <section class="panel">
     <div class="panel-header">
-      <h2>Tune &mdash; Gradient</h2>
+      <h2>Gradient</h2>
       <label class="switch-label">
         <input type="checkbox" id="gradient-live" checked>
         <span>Apply live</span>
@@ -74,20 +74,28 @@
 
   <section class="panel">
     <div class="panel-header">
-      <h2>Tune &mdash; Typing Reactive</h2>
+      <h2>Reactive Typing</h2>
       <label class="switch-label">
         <input type="checkbox" id="tr-live" checked>
         <span>Apply live</span>
       </label>
     </div>
     <div class="tune-grid">
-      <label class="field wide">
+      <label class="field">
         <input type="checkbox" id="tr-enabled" checked>
         <span>Enable typing-reactive chase</span>
       </label>
       <label class="field">
+        <input type="checkbox" id="tr-bolt-reset">
+        <span>Bolt Reset</span>
+      </label>
+      <label class="field">
         <input type="checkbox" id="tr-use-gradient" checked>
         <span>Use Gradient panel as background</span>
+      </label>
+      <label class="field">
+        <input type="checkbox" id="tr-use-custom-keys">
+        <span>Use Custom Key Colors as background</span>
       </label>
       <label class="field" id="tr-base-color-field" hidden>
         <span>Base color</span>
@@ -97,10 +105,6 @@
         <label class="field">
           <span>Bright / bolt color</span>
           <input type="color" id="tr-bright" value="#ffffff">
-        </label>
-        <label class="field wide">
-          <span>Flash decay (s) <em id="tr-decay-val"></em></span>
-          <input type="range" id="tr-decay" min="0.1" max="2" step="0.05" value="0.6">
         </label>
         <label class="field">
           <span>Bolt shape</span>
@@ -117,6 +121,10 @@
           </select>
         </label>
         <label class="field wide">
+          <span>Flash decay (s) <em id="tr-decay-val"></em></span>
+          <input type="range" id="tr-decay" min="0.1" max="2" step="0.05" value="0.6">
+        </label>
+        <label class="field wide">
           <span>Bolt speed <em id="tr-speed-val"></em></span>
           <input type="range" id="tr-speed" min="2" max="30" step="1" value="12">
         </label>
@@ -124,12 +132,48 @@
           <span>Bolt tail length <em id="tr-tail-val"></em></span>
           <input type="range" id="tr-tail" min="0.5" max="10" step="0.5" value="3">
         </label>
+        <label class="field wide">
+          <span>Bloom max distance <em id="tr-maxdist-val"></em></span>
+          <input type="range" id="tr-maxdist" min="0" max="18.5" step="0.5" value="18.5">
+        </label>
         <label class="field wide" id="tr-flicker-field" hidden>
           <span>Rainbow flicker speed <em id="tr-flicker-val"></em></span>
           <input type="range" id="tr-flicker" min="1" max="20" step="1" value="6">
         </label>
       </div>
     </div>
+  </section>
+
+  <section class="panel ck-panel">
+    <div class="panel-header">
+      <h2>Custom Key Colors</h2>
+      <label class="switch-label">
+        <input type="checkbox" id="ck-live" checked>
+        <span>Apply live</span>
+      </label>
+    </div>
+    <div class="ck-toolbar">
+      <span id="ck-selection-label" class="ck-selection-label">No keys selected</span>
+      <div class="ck-toolbar-spacer"></div>
+      <label class="ck-inline-field">
+        <span>Default</span>
+        <input type="color" id="ck-default-color" value="#000000">
+      </label>
+      <label class="ck-inline-field">
+        <span>Paint</span>
+        <input type="color" id="ck-picker" value="#ffffff" disabled>
+      </label>
+      <button id="ck-select-all" class="btn btn-ghost">Select all</button>
+      <button id="ck-select-none" class="btn btn-ghost">Deselect</button>
+      <button id="ck-reset-selected" class="btn btn-ghost">Reset selected</button>
+      <button id="ck-clear-all" class="btn btn-ghost">Clear all</button>
+      <button id="ck-pull-current" class="btn btn-accent">Pull current colors</button>
+    </div>
+    <div class="ck-recent-row" id="ck-recent-row">
+      <span class="ck-recent-label">Recently used:</span>
+      <span class="panel-sub" id="ck-recent-empty">none yet</span>
+    </div>
+    <div id="ck-keyboard" class="keyboard ck-keyboard"></div>
   </section>
 
 </main>
