@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from daemon.input_listener import InputListener
 from effects.layout import cell_positions
 from hardware.device import Keyboard, NUM_CELLS
+from hardware.lightbar import Lightbar
 
 app = FastAPI()
 
@@ -31,6 +32,7 @@ _GUI_DIR = os.path.join(_PROJECT_ROOT, "gui")
 _KEY_STATE_MAX_AGE = 5.0  # seconds of press history kept for effects to read
 
 _keyboard = None
+_lightbar = None
 _effects = {}  # name -> render function
 _current_effect = "static"
 _current_params = {"color": (0, 0, 0)}
@@ -89,15 +91,35 @@ class KeypressRequest(BaseModel):
     name: str  # keymap.json key name
 
 
+class LightbarZoneRequest(BaseModel):
+    zone: int  # 1 (left), 2 (center), or 3 (right)
+    hex: str
+
+
+class LightbarColorRequest(BaseModel):
+    hex: str
+
+
+def _hex_to_rgb(hex_str: str):
+    hex_str = hex_str.lstrip("#")
+    return int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16)
+
+
 @app.on_event("startup")
 async def startup():
-    global _keyboard, _input_listener, _current_effect, _current_params
+    global _keyboard, _lightbar, _input_listener, _current_effect, _current_params
     _load_effects()
     try:
         _keyboard = Keyboard()
     except RuntimeError as e:
         print(f"[daemon] WARNING: running without hardware -- {e}")
         _keyboard = None
+    try:
+        _lightbar = Lightbar()
+        print("[daemon] lightbar initialized")
+    except Exception as e:
+        print(f"[daemon] WARNING: running without lightbar -- {e}")
+        _lightbar = None
     try:
         _input_listener = InputListener(_KEYMAP_PATH)
         _input_listener.start()
@@ -169,10 +191,7 @@ def set_effect(req: EffectRequest):
 @app.post("/color")
 def set_color(req: ColorRequest):
     global _current_effect, _current_params
-    hex_str = req.hex.lstrip("#")
-    r = int(hex_str[0:2], 16)
-    g = int(hex_str[2:4], 16)
-    b = int(hex_str[4:6], 16)
+    r, g, b = _hex_to_rgb(req.hex)
     _current_effect = "static"
     _current_params = {"color": (r, g, b)}
     return {"ok": True}
@@ -186,10 +205,46 @@ def off():
     return {"ok": True}
 
 
+@app.post("/lightbar/zone")
+def set_lightbar_zone(req: LightbarZoneRequest):
+    if _lightbar is None:
+        return {"ok": False, "error": "lightbar not available"}
+    r, g, b = _hex_to_rgb(req.hex)
+    try:
+        _lightbar.set_zone(req.zone, r, g, b)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True}
+
+
+@app.post("/lightbar/all")
+def set_lightbar_all(req: LightbarColorRequest):
+    if _lightbar is None:
+        return {"ok": False, "error": "lightbar not available"}
+    r, g, b = _hex_to_rgb(req.hex)
+    try:
+        _lightbar.set_all(r, g, b)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True}
+
+
+@app.post("/lightbar/off")
+def lightbar_off():
+    if _lightbar is None:
+        return {"ok": False, "error": "lightbar not available"}
+    try:
+        _lightbar.off()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True}
+
+
 @app.get("/status")
 async def status():
     return {
         "hardware_connected": _keyboard is not None,
+        "lightbar_connected": _lightbar is not None,
         "current_effect": _current_effect,
         "params": _current_params,
         "num_cells": NUM_CELLS,

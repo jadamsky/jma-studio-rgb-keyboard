@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JMA Studio -- Lightbar</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body { padding: 20px 24px 28px; }
+  h1 {
+    font-size: 18px;
+    margin: 0 0 4px;
+    background: var(--accent-grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .subtitle { color: var(--text-muted); font-size: 12px; margin: 0 0 20px; }
+
+  .wheel-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+
+  .wheel-card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .wheel-card.all-zones {
+    grid-column: 1 / -1;
+  }
+
+  .wheel-title {
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: #000;
+  }
+
+  canvas.wheel {
+    cursor: crosshair;
+    border-radius: 50%;
+    touch-action: none;
+  }
+
+  .brightness-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .brightness-row span {
+    font-size: 11px;
+    color: var(--text-muted);
+    width: 34px;
+  }
+
+  input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent-b);
+  }
+
+  .off-row {
+    margin-top: 18px;
+    display: flex;
+    justify-content: center;
+  }
+
+  #status-log {
+    margin-top: 14px;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 16px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Lightbar</h1>
+<p class="subtitle">Click or drag on a wheel to set that zone's color. Viewed from the front of the laptop with the lid up.</p>
+
+<div class="wheel-grid">
+  <div class="wheel-card" id="card-1">
+    <div class="wheel-title"><span class="swatch" id="swatch-1"></span>Zone 1 -- Left</div>
+    <canvas class="wheel" id="wheel-1" width="180" height="180"></canvas>
+    <div class="brightness-row">
+      <span>Bright</span>
+      <input type="range" id="bright-1" min="0" max="100" value="100">
+    </div>
+  </div>
+
+  <div class="wheel-card" id="card-2">
+    <div class="wheel-title"><span class="swatch" id="swatch-2"></span>Zone 2 -- Center</div>
+    <canvas class="wheel" id="wheel-2" width="180" height="180"></canvas>
+    <div class="brightness-row">
+      <span>Bright</span>
+      <input type="range" id="bright-2" min="0" max="100" value="100">
+    </div>
+  </div>
+
+  <div class="wheel-card" id="card-3">
+    <div class="wheel-title"><span class="swatch" id="swatch-3"></span>Zone 3 -- Right</div>
+    <canvas class="wheel" id="wheel-3" width="180" height="180"></canvas>
+    <div class="brightness-row">
+      <span>Bright</span>
+      <input type="range" id="bright-3" min="0" max="100" value="100">
+    </div>
+  </div>
+
+  <div class="wheel-card all-zones" id="card-all">
+    <div class="wheel-title"><span class="swatch" id="swatch-all"></span>All Zones</div>
+    <canvas class="wheel" id="wheel-all" width="180" height="180"></canvas>
+    <div class="brightness-row">
+      <span>Bright</span>
+      <input type="range" id="bright-all" min="0" max="100" value="100">
+    </div>
+  </div>
+</div>
+
+<div class="off-row">
+  <button id="off-btn" class="btn btn-ghost">Turn Off</button>
+</div>
+
+<div id="status-log"></div>
+
+<script>
+const BASE = "";  // same origin as this page (daemon's static file server)
+
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60)       { r = c; g = x; b = 0; }
+  else if (h < 120) { r = x; g = c; b = 0; }
+  else if (h < 180) { r = 0; g = c; b = x; }
+  else if (h < 240) { r = 0; g = x; b = c; }
+  else if (h < 300) { r = x; g = 0; b = c; }
+  else              { r = c; g = 0; b = x; }
+  return [
+    Math.round((r + m) * 255),
+    Math.round((g + m) * 255),
+    Math.round((b + m) * 255),
+  ];
+}
+
+function rgbToHex(r, g, b) {
+  return "#" + [r, g, b].map(v => v.toString(16).padStart(2, "0")).join("");
+}
+
+function drawWheel(canvas) {
+  const ctx = canvas.getContext("2d");
+  const size = canvas.width;
+  const radius = size / 2;
+  const img = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - radius;
+      const dy = y - radius;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const idx = (y * size + x) * 4;
+      if (dist > radius) {
+        img.data[idx + 3] = 0;
+        continue;
+      }
+      let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      if (angle < 0) angle += 360;
+      const sat = Math.min(1, dist / radius);
+      const [r, g, b] = hsvToRgb(angle, sat, 1);
+      img.data[idx] = r;
+      img.data[idx + 1] = g;
+      img.data[idx + 2] = b;
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById("status-log");
+  el.textContent = msg;
+  el.style.color = isError ? "var(--danger)" : "var(--text-muted)";
+}
+
+async function post(path, body) {
+  try {
+    const res = await fetch(BASE + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      setStatus("Error: " + (data.error || "unknown"), true);
+    } else {
+      setStatus("");
+    }
+    return data;
+  } catch (e) {
+    setStatus("Request failed: " + e.message, true);
+  }
+}
+
+// Throttles the actual network call to at most once per `intervalMs`
+// while allowing a final call right after the last update -- keeps
+// dragging on a wheel responsive-looking (the swatch updates
+// instantly) without flooding the daemon with a request per pixel of
+// mouse movement, since each real commit takes a few hundred ms.
+function throttle(fn, intervalMs) {
+  let lastCall = 0;
+  let pendingArgs = null;
+  let timer = null;
+  function run(args) {
+    lastCall = Date.now();
+    fn(...args);
+  }
+  return (...args) => {
+    const now = Date.now();
+    const elapsed = now - lastCall;
+    if (elapsed >= intervalMs) {
+      run(args);
+    } else {
+      pendingArgs = args;
+      if (!timer) {
+        timer = setTimeout(() => {
+          timer = null;
+          if (pendingArgs) run(pendingArgs);
+          pendingArgs = null;
+        }, intervalMs - elapsed);
+      }
+    }
+  };
+}
+
+function setupZone(key, { swatchId, wheelId, brightId, apply }) {
+  const canvas = document.getElementById(wheelId);
+  const swatch = document.getElementById(swatchId);
+  const brightSlider = document.getElementById(brightId);
+  drawWheel(canvas);
+
+  let currentHue = 0, currentSat = 0;
+  let dragging = false;
+
+  const sendThrottled = throttle((hex) => apply(hex), 120);
+
+  function updateFromEvent(evt) {
+    const rect = canvas.getBoundingClientRect();
+    const x = evt.clientX - rect.left;
+    const y = evt.clientY - rect.top;
+    const radius = canvas.width / 2;
+    const dx = x - radius;
+    const dy = y - radius;
+    const dist = Math.min(radius, Math.sqrt(dx * dx + dy * dy));
+    let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    if (angle < 0) angle += 360;
+    currentHue = angle;
+    currentSat = dist / radius;
+    applyCurrent(true);
+  }
+
+  function applyCurrent(fromWheel) {
+    const value = brightSlider.value / 100;
+    const [r, g, b] = hsvToRgb(currentHue, currentSat, value);
+    const hex = rgbToHex(r, g, b);
+    swatch.style.background = hex;
+    sendThrottled(hex);
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    updateFromEvent(e);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (dragging) updateFromEvent(e);
+  });
+  canvas.addEventListener("pointerup", () => { dragging = false; });
+  canvas.addEventListener("pointercancel", () => { dragging = false; });
+
+  brightSlider.addEventListener("input", () => applyCurrent(false));
+}
+
+setupZone("zone1", {
+  swatchId: "swatch-1", wheelId: "wheel-1", brightId: "bright-1",
+  apply: (hex) => post("/lightbar/zone", { zone: 1, hex }),
+});
+setupZone("zone2", {
+  swatchId: "swatch-2", wheelId: "wheel-2", brightId: "bright-2",
+  apply: (hex) => post("/lightbar/zone", { zone: 2, hex }),
+});
+setupZone("zone3", {
+  swatchId: "swatch-3", wheelId: "wheel-3", brightId: "bright-3",
+  apply: (hex) => post("/lightbar/zone", { zone: 3, hex }),
+});
+setupZone("all", {
+  swatchId: "swatch-all", wheelId: "wheel-all", brightId: "bright-all",
+  apply: (hex) => post("/lightbar/all", { hex }),
+});
+
+document.getElementById("off-btn").addEventListener("click", () => {
+  post("/lightbar/off");
+  ["swatch-1", "swatch-2", "swatch-3", "swatch-all"].forEach(id => {
+    document.getElementById(id).style.background = "#000";
+  });
+});
+</script>
+
+</body>
+</html>

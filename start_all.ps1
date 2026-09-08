@@ -17,6 +17,13 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 $root = $PSScriptRoot
 $python = Join-Path $root ".venv\Scripts\python.exe"
 
+# Captures this script's own Write-Host output (AcerLightingService
+# stop/retry outcome, daemon/tray launch decisions) to a fixed file --
+# otherwise it vanishes into nowhere since the Scheduled Task and every
+# child process here run with -WindowStyle Hidden. Overwritten on every
+# run, so it always reflects the most recent startup attempt.
+Start-Transcript -Path (Join-Path $root "start_all.log") -Force | Out-Null
+
 Write-Host "Stopping AcerLightingService..."
 # Plain Automatic (non-delayed) start, confirmed via the service's
 # registry Start/DelayedAutoStart values -- it starts during boot,
@@ -47,7 +54,14 @@ if ($daemonUp) {
     Write-Host "Daemon already running on port 8420, skipping."
 } else {
     Write-Host "Starting daemon..."
-    Start-Process -FilePath $python -ArgumentList "-m uvicorn daemon.server:app --port 8420" -WorkingDirectory $root -WindowStyle Hidden
+    # stdout/stderr redirected to fixed log files -- this is the only
+    # place daemon/server.py's own startup prints (hardware/lightbar/
+    # input-listener init success or failure) end up anywhere readable,
+    # since -WindowStyle Hidden otherwise discards them silently.
+    # Overwritten on every daemon start, so always reflects this boot.
+    Start-Process -FilePath $python -ArgumentList "-m uvicorn daemon.server:app --port 8420" -WorkingDirectory $root -WindowStyle Hidden `
+        -RedirectStandardOutput (Join-Path $root "daemon.log") `
+        -RedirectStandardError (Join-Path $root "daemon-error.log")
     Start-Sleep -Seconds 3
 }
 
@@ -61,3 +75,4 @@ if ($trayUp) {
 
 Write-Host "Done."
 Start-Sleep -Seconds 2
+Stop-Transcript | Out-Null

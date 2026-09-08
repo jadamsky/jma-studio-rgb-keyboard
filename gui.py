@@ -32,6 +32,19 @@ def daemon_reachable() -> bool:
         return False
 
 
+class Api:
+    """Exposed to gui/app.js as `pywebview.api.*`. Only holds UI-level
+    concerns (opening windows) -- nothing here touches hardware or the
+    daemon directly, same thin-client rule as the rest of this file."""
+
+    def open_lightbar(self):
+        webview.create_window(
+            "JMA Studio -- Lightbar", f"{BASE}/app/lightbar.html",
+            width=520, height=680, min_size=(460, 600),
+            background_color="#0b0b12",
+        )
+
+
 def _initial_position():
     """Centered left-to-right, flush against the top of the screen --
     pywebview's own default placement left the window too low,
@@ -75,6 +88,7 @@ def main():
         width=WINDOW_WIDTH, height=WINDOW_HEIGHT, min_size=(780, 620),
         x=x, y=y,
         background_color="#0b0b12",
+        js_api=Api(),
     )
     # pywebview's create_window() has no working `icon` on Windows --
     # this is set at start() instead, which the WinForms backend does

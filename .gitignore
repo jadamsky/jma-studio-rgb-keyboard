@@ -4,3 +4,4 @@ __pycache__/
 *.log
 reference/
 .claude/
+lightbar_experiments/

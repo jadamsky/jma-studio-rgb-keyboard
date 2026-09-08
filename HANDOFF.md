@@ -764,6 +764,404 @@ closed or open-but-unfocused, occasional heavy input) tops out around
 15-19% of one core. Daemon restored to `gradient_only` afterward; GUI
 test window closed.
 
+## SOLVED + BUILT: the rear lightbar (fully working, cold-boot verified)
+
+User asked: "can we access the back LED bar too" -- the PH16-71 has a
+separate, physical, replaceable rear lightbar module (Acer part
+58.QJQN7.001) driven through a **completely different mechanism** than
+the per-key keyboard: Windows ACPI-WMI, not USB HID. This spanned
+multiple sessions and a LOT of dead ends (see "History of failed
+approaches" below, kept for the record) before finally being cracked by
+directly instrumenting Acer's own lighting binary with Frida. **Static/
+solid per-zone color is now fully working and reproducible.** What's
+NOT done yet: no real feature (`hardware/lightbar.py`, daemon endpoints,
+GUI/tray exposure) has been built around this -- next session should
+start there, using the confirmed protocol below.
+
+### THE WORKING PROTOCOL (verified live, reproduced on demand)
+
+Three WMI calls, in this exact order, repeated 3 times (~65ms apart) --
+matches Acer's own real software's cadence exactly (captured live, see
+"How this was found" below):
+
+```python
+import win32com.client
+wmi = win32com.client.GetObject(r"winmgmts:\\.\root\wmi")
+instance = list(wmi.InstancesOf("AcerGamingFunction"))[0]
+
+def call_array(method, arr):
+    p = instance.Methods_(method).InParameters.SpawnInstance_()
+    p.gmInput = list(arr)
+    return instance.ExecMethod_(method, p).Properties_("gmOutput").Value
+
+def call_u64(method, value):
+    p = instance.Methods_(method).InParameters.SpawnInstance_()
+    p.gmInput = value
+    return instance.ExecMethod_(method, p).Properties_("gmOutput").Value
+
+# 1. SetGamingLED -- fixed priming/enable trigger. IDENTICAL every time
+#    regardless of color/zone/brightness -- do not try to vary this.
+LED_PAYLOAD = [0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x15, 0x00, 0x00]
+call_array("SetGamingLED", LED_PAYLOAD)
+
+# 2. SetGamingKBBacklight -- mode=0, brightness, tail=(3,2). Carries NO
+#    color -- color lives entirely in step 3.
+def kb_commit(brightness=100):
+    return call_array("SetGamingKBBacklight",
+        [0, 0, brightness, 0, 0, 0, 0, 0, 3, 2, 0, 0, 0, 0, 0, 0])
+kb_commit()
+
+# 3. SetGamingRgbKb -- one call per zone. mask: 1=zone1, 2=zone2, 4=zone3.
+#    THE PACKING FORMULA WE HAD WRONG FOR MONTHS:
+#    (R<<8) | (G<<16) | (B<<24) | (0x08<<32) | (mask<<40)
+#    NOT (mask | R<<8 | G<<16 | B<<24) as every prior guess assumed --
+#    mask lives in byte 5 (bit 40), not byte 0, and there's a constant
+#    0x08 in byte 4 that every previous attempt was missing entirely.
+def rgbkb(mask, r, g, b):
+    return call_u64("SetGamingRgbKb", (r << 8) | (g << 16) | (b << 24) | (0x08 << 32) | (mask << 40))
+
+for _ in range(3):                    # repeat whole group 3x
+    call_array("SetGamingLED", LED_PAYLOAD)
+    kb_commit(100)
+    rgbkb(1, 255, 0, 0)               # zone 1
+    rgbkb(2, 255, 0, 0)               # zone 2
+    rgbkb(4, 255, 0, 0)               # zone 3
+    time.sleep(0.065)
+```
+
+Live in `lightbar_experiments/test_real_bytes.py` -- **verified working
+end to end, lightbar went solid red on the real hardware.** This is the
+reference implementation to build `hardware/lightbar.py` from.
+
+**Confirmed independent of Acer's own software**: re-ran the exact same
+script (as `test_real_bytes_blue.py`, red->blue so a no-op couldn't be
+mistaken for success) with `AcerLightingService` fully stopped and
+`OpenRGB.exe` not running at all -- still worked, lightbar went solid
+blue. So this protocol needs nothing from Acer running in the
+background; it's a pure standalone WMI call, consistent with this
+whole project's "replace PredatorSense entirely" design.
+
+Requires an elevated (Administrator) process, same as every other
+Set* method on this class -- see the elevation-architecture question
+still open in "Not done yet" below.
+
+### How this was found: instrumenting Acer's own binary with Frida
+
+Every byte-level guess (hundreds of variants, across many sessions) had
+failed. The breakthrough came from watching what Acer's own real
+software actually sends, using `pip install frida frida-tools` (note:
+the current frida release needs Python 3.11+; this project's venv is
+3.10, so pin `frida==16.7.19 frida-tools==13.7.1` -- newer frida's
+`__init__.py` does `from typing import NotRequired` which doesn't exist
+before 3.11 and throws `ImportError` immediately).
+
+1. **Identified the real actor via the WMI-Activity ETW trace**
+   (`wevtutil sl Microsoft-Windows-WMI-Activity/Trace /e:true`, then
+   `Get-WinEvent` filtered for `ClientProcessId`) -- it is **NOT**
+   `AcerLightingService.exe`. It's **`OpenRGB.exe`**, specifically a
+   private, never-upstreamed Acer fork ("AcerOpenRGB" per its own
+   unstripped PDB debug paths, e.g. `D:\project\AcerOpenRGB\OpenRGB\
+   Controllers\...`) bundled inside the `predatorservice` driver
+   package (`C:\WINDOWS\System32\DriverStore\FileRepository\
+   predatorservice.inf_amd64_*\OpenRGB.exe`), with its own dedicated
+   `AcerLightBarController`/`AcerGlobalController`/`AcerUSBController`
+   classes (found via `strings`-style extraction of the binary --
+   Acer left full debug paths in for the community-derived parts of
+   OpenRGB, though not for their own proprietary controller additions).
+   `AcerLightingService` only does read-only `GetGamingSysInfo`
+   polling; `OpenRGB.exe` is what actually calls every Set* method.
+2. **`OpenRGB.exe` only makes its WMI connection once, at its own
+   process startup** (not per lighting request) -- so a Frida hook
+   attached to an already-running instance sees nothing. Fix: kill it,
+   then `Restart-Service -Name AcerLightingService -Force` (this is
+   what spawns it) while tight-polling (`psutil`, 5ms interval) for the
+   new PID and attaching Frida to it immediately -- this reliably wins
+   the race in practice (attach typically lands well before the
+   process's own COM initialization completes).
+3. **Bootstrapped the actual COM interception** from two well-known,
+   PUBLIC, stable vtable layouts (`wbemcli.h`) rather than guessing at
+   WMI's higher-level scripting wrappers:
+   - Hook `ole32.dll!CoCreateInstance` (exported, hookable by name),
+     filter for `rclsid == CLSID_WbemLocator`
+     (`{4590F811-1D3A-11D0-891F-00AA004B2E24}`), read the returned
+     `IWbemLocator*` from the out-param.
+   - Read ITS vtable, hook vtable slot 3 (`ConnectServer`) via
+     `Interceptor.attach` on the raw function address (works on ANY
+     instance of that COM class since the vtable is shared/static per
+     implementing class -- you only need to bootstrap-discover it
+     once).
+   - In `ConnectServer`'s `onLeave`, read the returned `IWbemServices*`
+     out-param, read ITS vtable, hook slot 24 (`ExecMethod`) the same
+     way.
+   - In `ExecMethod`'s `onEnter`, `args[2]` (`strMethodName`) is
+     declared `BSTR` in the IDL but **is NOT a real length-prefixed
+     BSTR in practice** -- reading it with proper BSTR semantics
+     (`ptr.sub(4).readU32()` length prefix) always returned an empty
+     string. It's actually just a plain null-terminated `LPCWSTR`;
+     `args[2].readUtf16String()` (no length arg) works perfectly. Cost
+     a lot of debugging time -- **don't trust the IDL-declared type
+     over an empirical raw-pointer dump when a read comes back
+     suspiciously empty.**
+   - Filter `strMethodName` for anything starting with `"SetGaming"`,
+     then in `onLeave` call the in-params object's own
+     `IWbemClassObject::Get(L"gmInput", 0, &variant, NULL, NULL)`
+     (vtable slot 4) to cleanly extract the real value -- far more
+     reliable than trying to parse raw SAFEARRAY/VARIANT memory layout
+     by hand. For byte-array results (`vt=8209` = `VT_ARRAY|VT_UI1`),
+     use the real `SafeArrayAccessData`/`SafeArrayGetUBound`/
+     `SafeArrayGetLBound`/`SafeArrayUnaccessData` exports from
+     `oleaut32.dll` to read it correctly regardless of the SAFEARRAY
+     struct's exact internal layout. **`SetGamingRgbKb`'s gmInput came
+     back as `vt=8` (`VT_BSTR`, a decimal-string like `"1137832953344"`)**,
+     not the `VT_UI8` its own MOF declares -- another IDL-vs-reality
+     mismatch; had to add a `vt===8` branch reading a `BSTR*` at the
+     usual offset+8 to get this.
+   - Working reference script: `lightbar_experiments/frida_hook_v2.py`.
+4. **Decoded the captured bytes by hand** (`python -c "...".to_bytes(8,
+   'little')"` on the captured decimal strings) to get the real
+   `SetGamingRgbKb` packing formula (see above) and confirm
+   `SetGamingLED`'s fixed payload and `SetGamingKBBacklight`'s
+   color-free commit shape.
+
+### History of failed approaches (kept for the record -- don't redo these)
+
+All of the below were tried, extensively, across multiple sessions,
+before the Frida approach cracked it. Not needed for future work, but
+kept so nobody re-derives them from scratch or wastes time re-reading
+sibling projects that turned out to be red herrings for this exact
+chassis:
+
+- **STATIC mode (`0xFF`) in `SetGamingKBBacklight` never worked**,
+  despite being Venator's own documented approach for PH16-71 and
+  despite hundreds of byte-level variations (tail bytes, reserved byte,
+  direction, speed, brightness scale, color channel order, double-
+  sends). Turns out this chassis's real software doesn't use STATIC
+  mode at all for solid color -- it uses mode=0 (nominally "OFF") as a
+  neutral "commit" carrying no color, with the actual color coming
+  entirely from `SetGamingRgbKb`. Sending mode=0 with real color also
+  never worked on its own (tried per a sibling PHN18 project's finding)
+  -- `SetGamingLED`'s priming call turned out to be the missing
+  ingredient, not the KBBacklight payload shape.
+- **`SetGamingLED` calls always threw "Invalid parameter"** across many
+  dozens of content variants, because every attempt used a 16-byte (or
+  9-byte) array -- this exact machine's `SetGamingLED` requires
+  **exactly 12 bytes** (`MAX=12`), overriding the generic 16-byte value
+  a sibling model's decompiled MOF showed. This was invisible in
+  `Get-CimClass`'s default summary view; only visible by drilling into
+  each parameter's `.Qualifiers` collection directly. Confirmed via
+  Scheduled-Task-as-SYSTEM testing that this had nothing to do with
+  privilege level either.
+- **`SetGamingLEDColor`/`SetGamingLEDBehavior`/plain `SetGamingRgbKb`
+  guesses (mask-only packing) never worked** and were readback-
+  confirmed to be either non-functional on this chassis or using a
+  completely different (and, it turns out, wrong) packing scheme --
+  independently corroborated by `cellux-git/nitro-tray`'s own
+  extensive, rigorous research on a different Acer model reaching the
+  same "investigated, not figured out" conclusion for their equivalent
+  secondary LED surface.
+- **A generic `SafeArrayAccessData`/`VariantCopy` hook (no COM
+  bootstrapping)** did successfully observe some real traffic (this is
+  how `SetGamingKBBacklight`'s color-free commit shape was first
+  confirmed) but produced way too much unrelated noise from other COM
+  activity in the process to reliably isolate `SetGamingLED`/
+  `SetGamingRgbKb`'s actual values -- superseded by the precise
+  `ExecMethod`-boundary hook described above.
+- Multiple sibling reverse-engineering projects for OTHER Acer/Nitro
+  models were mined for clues (`Exyons/Venator`, `fredac100/nekro-sense`,
+  `RedStiff/Acer_Predator_Tool-PHN18-71`, `jlucaso1/acer-predator-re`,
+  `cellux-git/nitro-tray`, `daeora/apge-control`) -- useful for general
+  orientation (confirmed the WMI class/GUID, the method-ID numbering
+  scheme, the general shape of the problem) but **none had the actual
+  correct bytes for THIS chassis** -- every model's firmware build
+  differs in real, undocumented ways (array lengths, packing schemes,
+  even which methods are wired to real hardware at all). Lesson
+  confirmed repeatedly this session: verify everything live against
+  THIS machine; treat every external reference as a hypothesis
+  generator, never a source of truth.
+
+### The real feature -- built and warm-tested this session
+
+- **`hardware/lightbar.py`** -- new module implementing the working
+  protocol above, mirroring `hardware/device.py`'s style (module
+  docstring citing sources, `RuntimeError` with a helpful message if
+  the WMI class isn't found, clean public API: `Lightbar.set_zone(zone,
+  r,g,b)`, `.set_all(r,g,b)`, `.off()`).
+  - **Real bug found and fixed**: COM objects are thread-affine, but
+    FastAPI/Starlette runs sync `def` endpoints in a worker threadpool
+    -- caching one WMI instance at daemon startup and reusing it from a
+    later request handler threw `CO_E_NOTINITIALIZED` (0x800401F0,
+    "Exception occurred." with a null description -- distinct from the
+    earlier "Invalid parameter" COM errors, easy to mistake for a new
+    protocol bug if you don't recognize the code). Fixed by resolving a
+    fresh WMI instance **per-thread** (`threading.local()` +
+    `pythoncom.CoInitialize()` the first time each thread touches it) --
+    cheap to do since resolving the instance is a fast local lookup.
+    **If this class is ever touched from a different concurrency model,
+    re-check this.**
+- **`daemon/server.py`**: `Lightbar()` constructed at startup (same
+  try/except-and-degrade-gracefully pattern as `Keyboard()`, but
+  catching broad `Exception` since COM can throw things beyond
+  `RuntimeError`); new endpoints `POST /lightbar/zone` (`{zone, hex}`),
+  `POST /lightbar/all` (`{hex}`), `POST /lightbar/off`; `/status` now
+  also reports `lightbar_connected`. Refactored the existing `/color`
+  endpoint's inline hex-parsing into a shared `_hex_to_rgb()` helper
+  used by both.
+- **GUI**: a "Lightbar" button in the main window's topbar opens a
+  *second* native pywebview window (`gui/lightbar.html`) via a new
+  `Api.open_lightbar()` method exposed as `js_api` on the main window
+  (`window.pywebview.api.open_lightbar()` from `gui/app.js`) -- the
+  established pattern for spawning additional native windows from a
+  page's own JS in this pywebview setup, worth reusing for any future
+  secondary window. The lightbar page itself is self-contained (own
+  inline `<style>`/`<script>`, just links the shared `style.css` for
+  the dark theme/accent variables): four **custom canvas-drawn HSV
+  color wheels** (hue = angle, saturation = radius, value fixed at 1.0
+  and scaled separately by a brightness slider under each wheel) --
+  built from scratch rather than `<input type="color">` specifically
+  because the user wanted "click a color and it changes immediately,
+  no OK button." Pointer events fire live during drag, throttled to
+  ~120ms between actual network calls (the swatch preview updates
+  instantly regardless) so fast dragging doesn't flood the daemon with
+  a request per pixel of movement. One wheel per zone (labeled Left/
+  Center/Right, matching the confirmed physical mapping) plus one for
+  "All Zones", and a "Turn Off" button.
+- **Also fixed in passing**: a long-standing, unrelated latent CSS bug
+  the user finally mentioned -- `.hw-label { width: 0 }` (the
+  "Connected"/"No hardware" status pill text, injected via `::after`)
+  forced that pseudo-element's text to line-wrap inside a zero-width
+  box, visually dropping it below the status dot instead of beside it.
+  Fixed by removing `width: 0` and adding `white-space: nowrap` to both
+  `.hw-label` and `.hw-label::after`.
+- **Daemon logging added for the pending cold-boot test** (see below):
+  `start_all.ps1` now wraps itself in `Start-Transcript`/
+  `Stop-Transcript` to `start_all.log` (captures its own `Write-Host`
+  output -- the `AcerLightingService` stop/retry outcome, daemon/tray
+  launch decisions -- which otherwise vanishes since the Scheduled Task
+  and every child process run `-WindowStyle Hidden`), and redirects the
+  daemon's own stdout/stderr to `daemon.log`/`daemon-error.log` via
+  `Start-Process -RedirectStandardOutput/-RedirectStandardError`. All
+  three are overwritten fresh on every `start_all.ps1` run, so they
+  always reflect the most recent boot. **Caveat found while testing
+  this**: Python fully-buffers stdout when redirected to a file (unlike
+  a real console), so `daemon.log` can appear empty for a while even
+  though the process is healthy -- the live `/status` endpoint
+  (`lightbar_connected`/`hardware_connected`) is the faster, more
+  reliable way to check daemon health than reading the log while it's
+  still running; the log is more useful post-mortem (after the process
+  exits/crashes, or once enough output has accumulated to flush).
+- **Verified warm** (Scheduled Task triggered manually mid-session,
+  i.e. the exact real production startup path, not a dev shortcut):
+  `/status` reported both `hardware_connected` and `lightbar_connected`
+  true; direct calls to all three new endpoints (`/lightbar/zone` green
+  on zone 1, `/lightbar/all` magenta, `/lightbar/off`) each visually
+  confirmed on the real hardware; the actual GUI window's "Lightbar"
+  button and all four color wheels tested live and confirmed working
+  by the user ("it worked").
+- **NOT yet verified**: a real cold boot (full restart, not just
+  re-triggering the Scheduled Task from an already-logged-in session).
+  This is the next thing to happen -- see "Immediately pending" below.
+
+### Cold-boot verification: CONFIRMED
+
+User did a genuine full restart (not just re-triggering the Scheduled
+Task from an already-logged-in session). Result: **fully working, zero
+manual steps, zero UAC prompts.** Confirmed via `/status` showing both
+`hardware_connected` and `lightbar_connected` true, with real usage
+stats already accumulated (thousands of rendered frames, real input-
+listener key events) -- genuine organic post-boot state, not a warm
+test artifact. The elevation architecture (Scheduled Task ->
+`start_all.ps1` -> daemon inherits elevation) and the lightbar protocol
+are both solid end to end. Nothing left to verify on this front.
+
+Two write-ups were produced from this whole investigation afterward,
+for sharing with others solving the same problem on their own units:
+`LIGHTBAR_REVERSE_ENGINEERING.md` (full detailed account) and
+`LIGHTBAR_SUMMARY.md` (short, forum-comment-ready version pointing to
+the detailed one). Both live in the project root.
+
+`lightbar_experiments/` was cleaned out after this (test/diagnostic
+scripts and downloaded reference material removed -- their extracted
+value is fully captured in this file and the two documents above;
+captured log/trace output was kept, moved to
+`lightbar_experiments/logs/`).
+
+### Not done yet (not blocking, no immediate plan)
+
+1. ~~Elevation architecture, still unresolved~~ **RESOLVED -- already
+   solved by the existing architecture, nothing new needed**: verified
+   empirically (via `check_elevation.ps1`, reading each process's real
+   `TokenElevationType` through `OpenProcessToken`/`GetTokenInformation`)
+   that when the daemon is started the normal production way -- via the
+   "JMA Studio Autostart" Scheduled Task (`RunLevel HighestAvailable`,
+   triggers at login, no interactive UAC prompt) -- the resulting
+   `daemon/server.py` process (and `tray.py`, spawned the same way) is
+   **already running fully elevated**, because it's a child process of
+   the (already pre-elevated-by-the-task) `start_all.ps1`, and child
+   processes inherit their parent's integrity level. So: just call the
+   WMI code **directly inside `daemon/server.py`'s own process**
+   (`import` `hardware/lightbar.py` and call it in-process, same
+   pattern as `hardware/device.py`) -- do NOT spawn it as a separate
+   script or shell out to a new elevated process the way every test
+   script this session did (those needed their own `-Verb RunAs`
+   only because they were run standalone, outside the daemon). Once
+   in-process, every lightbar HTTP request the daemon serves will run
+   with zero additional UAC prompts, for as long as that daemon keeps
+   running (i.e. until next reboot/re-login, when the task
+   re-elevates automatically again). No separate helper process,
+   service, or `schtasks /run` trick needed after all.
+2. **Formalize `pywin32` as a real dependency** -- add to
+   `requirements.txt` (currently only installed ad hoc in `.venv`).
+   Also decide whether `frida`/`frida-tools`/`psutil` (all installed
+   this session, `frida` pinned to `16.7.19`/`13.7.1` for Python 3.10
+   compatibility) should be documented as dev-only tools (like
+   Playwright already is) since they were purely for this
+   investigation, not needed by the shipped app.
+3. ~~Only 2 of 3 zones' exact real RGB values were ever independently
+   cross-checked~~ **RESOLVED**: confirmed live via
+   `lightbar_experiments/color_wheel_tester.py` (interactive per-zone
+   color picker). Viewed from the front of the laptop with the lid up:
+   **mask=1 = left zone, mask=2 = center zone, mask=4 = right zone.**
+4. `AcerLightingService` should be left in whatever state matches this
+   project's existing convention (`start_all.ps1` stops it on startup,
+   same as it always has for the keyboard) once lightbar work resumes
+   -- it was started/stopped/restarted many times this session purely
+   for testing and its current state at any given moment shouldn't be
+   assumed; check `Get-Service -Name AcerLightingService` fresh.
+
+### `lightbar_experiments/` cleaned up after the feature was built and verified
+
+Once the protocol was confirmed working (cold-boot verified) and fully
+written up in `LIGHTBAR_REVERSE_ENGINEERING.md` (see project root),
+every test/diagnostic script (`.py`/`.ps1`) and downloaded reference
+file (`.c`/`.cs`/`.rs`/`.mof`/`.md` copies of sibling projects) was
+deleted -- their value is fully captured in that document and this
+file, and all are public/re-downloadable from the cited repos if ever
+needed again. **What's left**: `lightbar_experiments/logs/` only,
+holding the raw captured evidence (ETW trace dumps, Frida capture
+output, extracted binary strings) as a permanent record, in case any
+conclusion here is ever questioned or needs re-deriving in more detail
+than the write-up covers. Nothing in `logs/` is needed to run the app
+or to reproduce the working protocol -- it's an audit trail, not a
+dependency.
+
+If the protocol ever needs re-verifying (firmware update, different
+chassis), `LIGHTBAR_REVERSE_ENGINEERING.md`'s "Getting the real bytes"
+section documents the Frida technique in enough detail to rebuild the
+capture script from scratch -- it was short-lived tooling, not
+something worth keeping on disk indefinitely.
+
+**Critical operational note (still applies to ALL elevated work on this
+project)**: a UAC prompt triggered via `Start-Process ... -Verb RunAs
+-Wait` can silently report "the operation was canceled by the user" if
+it appears without warning and times out unanswered. **Always tell the
+user "a UAC prompt is coming, please click Yes within ~15 seconds" in a
+separate message BEFORE** issuing the elevated command, never after.
+Also: when a script needs the user to act at a specific moment (e.g.
+"change a color now"), make sure its `print()` output is NOT redirected
+to a file (`*> file.txt`) if the user needs to see a live on-screen cue
+-- redirecting silently blanks the visible console window, which
+caused real confusion/wasted attempts this session before being caught.
+
 ## Not done / possible next steps (nothing promised, just noted)
 
 - Standalone `.exe` build (PyInstaller or similar) for a real Windows

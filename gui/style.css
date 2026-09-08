@@ -82,8 +82,8 @@ body {
 
 .hw-status.connected .hw-label::after { content: "Connected"; }
 .hw-status:not(.connected) .hw-label::after { content: "No hardware"; }
-.hw-label { visibility: hidden; width: 0; display: inline-block; }
-.hw-label::after { visibility: visible; display: inline-block; }
+.hw-label { visibility: hidden; display: inline-block; white-space: nowrap; }
+.hw-label::after { visibility: visible; display: inline-block; white-space: nowrap; }
 
 /* ---- layout ---- */
 

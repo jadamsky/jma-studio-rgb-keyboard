@@ -758,6 +758,14 @@ function syncTuningPanelsFromPreset(preset) {
 // ---- footer actions --------------------------------------------------------
 
 function wireFooter() {
+  document.getElementById("lightbar-btn").addEventListener("click", () => {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_lightbar) {
+      window.pywebview.api.open_lightbar();
+    } else {
+      toast("Lightbar window requires the desktop app");
+    }
+  });
+
   document.getElementById("off-btn").addEventListener("click", async () => {
     await post("/off");
     state.activePreset = null;
