@@ -68,8 +68,10 @@ for _ in range(3):  # repeat 3x, ~65ms apart -- matches Acer's own real cadence
     time.sleep(0.065)
 ```
 
-Verified this needs nothing from Acer's own software running in the
-background (works with `AcerLightingService` fully stopped).
+Confirmed by eye on real hardware -- the bar actually lights up the
+intended color per zone, not just a clean WMI return -- and verified
+this needs nothing from Acer's own software running in the background
+(works with `AcerLightingService` fully stopped).
 
 **If you're on a different model or a different bios/firmware
 revision**: don't assume these exact bytes apply — `SetGamingLED`'s
