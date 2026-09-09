@@ -1,11 +1,18 @@
 ## Acer Predator Helios 16 (PH16-71) rear lightbar: solved static/solid color
 
-Posting this in case it helps anyone else stuck on this. On my PH16-71
-(3-zone rear lightbar), static color turned out to need three separate
-WMI method calls together, not the single `SetGamingKBBacklight`
-STATIC-mode (`0xFF`) call most write-ups (including my own earlier
-attempts) assume. That mode simply never produced light on my unit,
-no matter the byte layout.
+Posting this in case it helps anyone else stuck on this. Full
+disclosure on how it got solved: the actual investigation (Frida
+instrumentation, WMI tracing, byte-level decoding, every script below)
+was done by [Claude Code](https://claude.com/claude-code); my part was
+directing the approach and suggesting testing methods at each dead
+end, not the hands-on reverse-engineering itself. Sharing that because
+it's relevant to how this got solved, not just what was found.
+
+On my PH16-71 (3-zone rear lightbar), static color turned out to need
+three separate WMI method calls together, not the single
+`SetGamingKBBacklight` STATIC-mode (`0xFF`) call most write-ups
+(including this project's own earlier attempts) assume. That mode
+simply never produced light on this unit, no matter the byte layout.
 
 **Class**: `AcerGamingFunction`, namespace `root\wmi`, GUID
 `7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56`. Requires an elevated
@@ -47,7 +54,7 @@ def kb_commit(brightness=100):
 def rgbkb(mask, r, g, b):
     # mask 1/2/4 = zone 1/2/3. This packing (mask in byte 5, plus a
     # constant 0x08 in byte 4) is what actually worked -- NOT
-    # mask | R<<8 | G<<16 | B<<24, which is what I originally guessed
+    # mask | R<<8 | G<<16 | B<<24, which is what was originally guessed
     # and never got anywhere with.
     value = (r << 8) | (g << 16) | (b << 24) | (0x08 << 32) | (mask << 40)
     return call_u64("SetGamingRgbKb", value)
@@ -70,6 +77,6 @@ array length and `SetGamingRgbKb`'s packing formula both turned out to
 be genuinely different from what other Acer models' own
 reverse-engineering write-ups documented. The Frida-based technique
 (watch the vendor's own real software make the calls) is what actually
-got me unstuck after months of guessing; happy to share the full
+got this unstuck after a few hours of guessing; happy to share the full
 detailed write-up (WMI method-ID mapping, the Frida hooking approach,
 every dead end tried) if it'd help.

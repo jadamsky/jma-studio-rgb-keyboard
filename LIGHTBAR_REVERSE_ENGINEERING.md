@@ -8,8 +8,22 @@ sibling Acer/Nitro gaming laptop — trying to solve the same problem.
 
 If you just want the punchline (the working bytes) without the story,
 skip to [The final, complete protocol](#the-final-complete-protocol).
-If you're fighting the exact same wall we hit for months, the [dead
-ends](#dead-ends-what-did-not-work) section may save you a lot of time.
+If you're fighting the exact same wall, the [dead
+ends](#dead-ends-what-did-not-work) section may save you a lot of
+time — the whole investigation below, dead ends included, took a few
+hours in one sitting, not the months the length of this document might
+suggest.
+
+**How this was actually done**: this was a human+AI collaboration, and
+the split of labor matters enough to state plainly. [Claude
+Code](https://claude.com/claude-code) did the hands-on technical work —
+writing and running every script and Frida hook below, reading the WMI
+traces, decoding the captured bytes. The human's role was directing
+the overall approach and proposing testing methods at each dead end
+(e.g. "check what the vendor's own app actually sends," "find who's
+really making the call," "instrument the binary directly") rather than
+doing the byte-level investigation by hand. "We" throughout this
+document refers to that pairing, not a team of people.
 
 **Scope and honesty check up front**: every byte value in this document
 was confirmed live, on one specific PH16-71 unit, by watching Acer's own
