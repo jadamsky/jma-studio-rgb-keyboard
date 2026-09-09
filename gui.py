@@ -73,6 +73,20 @@ class Api:
             background_color="#0b0b12",
         )
 
+    def open_controller_reactive(self):
+        # Same cascade-from-cached-main-position pattern as
+        # open_lightbar() above, offset further down/right so the two
+        # secondary windows don't stack exactly on top of each other if
+        # both get opened.
+        x = (_main_window_pos[0] or 0) + 90
+        y = (_main_window_pos[1] or 0) + 63
+        webview.create_window(
+            "JMA Studio -- Controller Reactive", f"{BASE}/app/controller_reactive.html",
+            width=WINDOW_WIDTH, height=WINDOW_HEIGHT, min_size=(780, 620),
+            x=x, y=y,
+            background_color="#0b0b12",
+        )
+
 
 # Set once in main(), on the main thread, right after computing the
 # main window's own position -- see Api.open_lightbar()'s comment.

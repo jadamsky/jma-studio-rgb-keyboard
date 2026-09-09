@@ -1799,3 +1799,228 @@ Verified directly against the running daemon just now:
   fully brought current (this whole set of sections, done), and
   mentioned "another big project after this" -- nothing further
   specified yet as of this writing.
+
+## Controller Reactive: PS5 DualSense keyboard-override effect (new, this session)
+
+The "another big project" from above. User plays most games on this PC
+via Steam using a PS5 DualSense Edge controller, and wanted a keyboard
+effect driven by it -- different keys light up for different controller
+inputs. Explicit constraints given up front: wired (USB) first,
+Bluetooth later; needs its own page; enabling it fully overrides
+whatever else the keyboard is doing; it's NOT a regular preset, but it
+does need its own separate "save current settings"; always enabled
+manually, so no startup-default logic.
+
+### Architecture
+
+- **`hardware/controller.py`** (new) -- `Controller` class, background
+  thread continuously reading raw USB HID reports from the DualSense,
+  exposing the latest parsed state via a thread-safe `get_state()`
+  (same shape as `Lightbar`'s per-thread-COM pattern conceptually, but
+  simpler since HID reads don't have COM's thread-affinity issue --
+  just a plain lock-protected dict updated by one background thread and
+  read by the render loop). Graceful-degrades to `None` if no
+  controller is connected, same pattern as `Keyboard`/`Lightbar`.
+  **Real gotcha hit**: forgot this file needs the exact same
+  `os.add_dll_directory()` fix `hardware/device.py` has before
+  `import hid` -- without it, and because Python imports
+  `hardware.controller` before `hardware.device` alphabetically in
+  `daemon/server.py`'s import list, the bare `import hid` failed to
+  find `hidapi.dll` and **crashed the entire daemon on startup** (not
+  just "controller unavailable," everything was down). Fixed by adding
+  the identical DLL-directory-registration block to this file too --
+  don't assume only the first hardware/*.py file to `import hid` needs
+  this; any of them independently do, depending on import order.
+- **`effects/controller_reactive.py`** (new) -- pure `render()`
+  function, reads `controller_state` from `params` (injected by the
+  daemon each frame, same pattern as `typing_reactive`'s `key_state`).
+  See "Final design" below for exactly what it does.
+- **`daemon/server.py`**: `_controller` global (initialized at startup,
+  try/except-degrade like keyboard/lightbar), `controller_state`
+  injected into every `_render_loop()` frame unconditionally (cheap,
+  effects that don't care just ignore it -- same pattern as
+  `key_state`). New endpoints: `POST /controller_reactive/enable`
+  (saves whatever was running as `_pre_controller_reactive_state` so
+  `disable` can restore it exactly, then takes over `_current_effect`),
+  `POST /controller_reactive/disable`, `GET/POST /controller_reactive
+  /settings` (live-update, does NOT persist), `POST /controller_reactive
+  /settings/save` (persists to `controller_reactive.json`, separate
+  from `presets.json`), `GET /controller_reactive/button_groups` (group
+  name -> keys it lights, so the GUI doesn't hardcode a second copy),
+  `GET /controller_reactive/defaults` (single source of truth for the
+  "Default" button's target values), `GET /controller_reactive/status`.
+- **`gui/controller_reactive.html`** (new) -- its own standalone window,
+  opened via a new `Api.open_controller_reactive()` in `gui.py`
+  (identical cascade-from-cached-main-position pattern as
+  `open_lightbar()`) and a new "Controller Reactive" button on the main
+  window (`gui/index.html`/`app.js`).
+
+### The HID protocol (DualSense Edge, confirmed empirically)
+
+Same technique as the lightbar's original reverse-engineering (ask the
+user to hold a specific input, snapshot the raw report, diff against an
+idle baseline) but far faster here since Sony's general DualSense
+report layout is well-documented publicly -- only needed a couple of
+spot-checks to confirm the well-known layout actually matched this
+unit, then genuinely fresh captures only for the completely-
+undocumented DualSense-Edge-only extensions (rear paddles, Fn buttons).
+**Lesson already learned from the lightbar work paid off directly here
+too**: don't just trust the public docs -- Cross (bit5 of byte 8) and
+D-pad-Up (hat value 0) and L1 (bit0 of byte 9) were each independently
+confirmed live before trusting the rest of that same byte's documented
+bit layout for the untested buttons (Square/Circle/Triangle, R1).
+
+USB report: report ID `0x01`, 64 bytes total. Bluetooth uses a
+different report ID/length and is NOT implemented at all yet.
+
+| Bytes | Meaning |
+|---|---|
+| 1-2 | Left stick X, Y (raw 0-255, center ~128) |
+| 3-4 | Right stick X, Y (same scale) |
+| 5 | L2 analog trigger (0-255) |
+| 6 | R2 analog trigger (0-255) |
+| 8 low nibble | D-pad hat switch: 0=up, 2=right, 4=down, 6=left, 8=neutral (0=up confirmed live) |
+| 8 high nibble | bit4=Square, bit5=Cross, bit6=Circle, bit7=Triangle (Cross confirmed live) |
+| 9 | bit0=L1, bit1=R1 (both confirmed live) |
+| 10 | **DualSense Edge only, not in general public docs -- all 4 confirmed live**: bit4=left Fn, bit5=right Fn, bit6=left paddle (L4), bit7=right paddle (R4) |
+
+Stick Y axis: confirmed live that pushing up DECREASES the raw byte
+toward 0 (screen-coordinate convention) -- pushing down increases it
+toward 255.
+
+### Final design (went through one full redesign after the first build)
+
+The FIRST version shared one color across both sticks and used fixed
+per-direction key lists with a single deadzone. After live testing, the
+user asked for a full color-model redesign:
+
+- **Background** can be toggled on/off independently of its stored
+  color (a checkbox next to the color picker) -- off forces pure black
+  regardless of the picked color.
+- **Each stick has its own 3 colors**, not shared: `idle` (0 to the
+  deadzone threshold -- always shown on that stick's anchor key, S for
+  left / L for right), `tier1` (deadzone to 50% deflection), `tier2`
+  (51-100%). Explicitly **no per-direction colors** -- up/down/left/
+  right all use the same band colors, per the user's own "I do not
+  need for individual directions."
+  **Design choice made but not yet re-confirmed with the user**: when
+  a push crosses into tier2, the WHOLE active key set (both the near
+  and far rings) switches to tier2's color together -- the near ring
+  does not stay tier1-colored underneath. This was my interpretation of
+  "a color select for 2-50%, then for 51-100%"; worth double-checking
+  next time it comes up, since the other reasonable reading (keep tier1
+  keys tier1-colored, only newly-added tier2 keys get tier2's color)
+  wasn't explicitly ruled out.
+- **Deadzone**: one slider (0-50%) shared by both sticks, doubles as
+  the idle/tier1 color boundary. Went through its own back-and-forth
+  this session: started at 8%, user said it felt "touchy" (too
+  sensitive), I initially LOWERED it to 3% (misread which direction
+  "touchy" implied), user corrected me ("I needed the deadzone raised
+  not lowered"), settled at 15%.
+- **16 individually-colorable button groups** (unchanged since first
+  built): `l1`,`r1`,`l2`,`r2`,`cross`,`square`,`circle`,`triangle`,
+  `dpad_up`,`dpad_down`,`dpad_left`,`dpad_right`,`left_paddle`,
+  `right_paddle`,`left_fn`,`right_fn` -- each its own color, each
+  independently on/off based on that specific input's own state (L2/R2
+  are deliberately all-or-nothing at 100% pull, not tiered like the
+  sticks, per explicit request).
+- **"Default" button**: resets every color to dark background
+  `(10,10,10)` + dark green `(0,100,0)` everywhere, live-preview only
+  (doesn't persist until Save is clicked) -- exact values exposed via
+  `GET /controller_reactive/defaults` as a single source of truth
+  shared between the effect module's own fallback constants and the
+  GUI, rather than hardcoding the numbers twice.
+- **"Save current settings"** persists everything to
+  `controller_reactive.json` -- deliberately separate from the
+  keyboard's `presets.json`, since this was explicitly asked NOT to be
+  a regular preset.
+- **No startup-default logic anywhere** for this feature -- always has
+  to be manually enabled via the window's checkbox, per explicit
+  request. Confirmed `_load_startup_default()`/the keyboard's own
+  startup-default path is completely untouched by any of this.
+
+### The actual key mapping (iterated live, several rounds of adjustment)
+
+- **Left stick** (anchor **S**): up -> W,E then (at 51-100%) also 2,3,4.
+  down -> Z,X then Windows,LeftAlt. left -> A then CapsLock. right -> D
+  then F.
+- **Right stick** (anchor **L**): up -> O,P then 9,0,Minus. down ->
+  Comma,Period then AltGr,ContextMenu. left -> K then J. right ->
+  Semicolon then Quote.
+- **L1** -> F1-F4. **L2** (100% pull only) -> F5-F8. **R1** -> PrtSc,
+  Ins, Del. **R2** (100% pull only) -> F9-F12. (This L1/L2/R1/R2 <->
+  key-group assignment was swapped once from an earlier arrangement per
+  explicit request -- the GROUPS of keys didn't change, just which
+  physical input triggers which group.)
+- **Face buttons -> numpad**: Cross -> Num2 (changed from an initial
+  Num0 per explicit request), Square -> Num4, Circle -> Num6, Triangle
+  -> Num8.
+- **D-pad**: Up -> Y, Left -> G, Right -> H, Down -> B.
+- **Paddles/Fn** (DualSense Edge only): Left paddle -> Left Shift, Left
+  Fn -> Left Ctrl, Right paddle -> Right Shift, Right Fn -> Right Ctrl.
+
+### Verification performed
+
+Isolated Python tests of `render()` directly for every band/button
+combination (idle/tier1/tier2 per stick, background on/off, multiple
+simultaneous buttons) before ever touching the daemon. Playwright tests
+of the full GUI page: confirmed all 23 color pickers render, a live
+color change actually reaches the running effect (checked via
+`/status`'s real `params`, NOT via `/controller_reactive/settings` --
+that endpoint only ever reflects the persisted file, a live-vs-
+persisted distinction that tripped up one of my own test scripts before
+I caught it), Save actually persists to the file, Default resets every
+input, and enable/disable correctly toggles the daemon's active effect
+both ways. Every key mapping round was also confirmed by the user
+directly on the real controller/keyboard after each change.
+
+### Not done / known caveats
+
+- **Bluetooth**: not implemented at all -- `find_controller_path()`
+  only matches `bus_type == hid.BusType.USB`. Deliberately deferred;
+  the report format differs (report ID `0x31`, ~78 bytes) and hasn't
+  been looked at.
+- **Hot-reconnect untested**: `Controller` is constructed once at
+  daemon startup. Unplugging/replugging the controller while the daemon
+  is running has not been tested -- likely needs a daemon restart to
+  pick the controller back up, same as any other hardware object in
+  this codebase.
+- **The tier2-replaces-tier1 color behavior** (see "Final design"
+  above) hasn't been explicitly re-confirmed as correct -- ask if it
+  ever comes up as feeling wrong.
+- **Uncommitted**: everything in this section (`hardware/controller.py`,
+  `effects/controller_reactive.py`, `gui/controller_reactive.html`, the
+  `gui.py`/`daemon/server.py`/`gui/index.html`/`gui/app.js` edits, and
+  `controller_reactive.json`) is NOT committed to git yet -- ask before
+  committing/pushing, per established project convention. `git status`
+  at time of writing shows exactly those files modified/untracked, main
+  otherwise clean and 2 commits ahead of origin (from the previous
+  session's lightbar work, already pushed).
+
+## Immediate live state as of writing this file (current, most recent)
+
+- Daemon running, `hardware_connected`/`lightbar_connected`/
+  `controller_connected` all true. `current_effect` is
+  `controller_reactive` **right now** (the user was actively testing it
+  when context ran low) -- this will NOT survive a daemon restart or
+  reboot (no startup-default logic for this feature, by design), so
+  don't be surprised if a fresh session finds the keyboard back on its
+  normal default preset instead.
+  `controller_reactive.json` itself, however, IS saved with clean
+  defaults (dark background, dark green everywhere, 15% deadzone) as of
+  the last explicit Save during testing -- the user's own real
+  preferred colors haven't been saved yet, this is just the neutral
+  starting point.
+- A real GUI window (`gui.py`) is open on the user's actual desktop
+  right now -- confirmed via a live process/window check, not assumed.
+  Do not kill python/pythonw processes indiscriminately in a future
+  session without checking first; this exact mistake very nearly
+  happened once already this session (see the single-instance-mutex
+  bug investigation earlier in this file for why a blind
+  `Stop-Process -Name pythonw` is risky).
+- Git: `main`/`stable` at commit `d4db47d` (pushed to origin last
+  session), with the whole Controller Reactive feature above sitting
+  uncommitted on top. User has not asked for a commit yet this segment.
+- User's own words right before this was written: this chat is running
+  low on context, asked for this file to be fully updated and for
+  cleanup, in preparation for a manual compact.

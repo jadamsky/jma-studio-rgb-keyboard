@@ -18,7 +18,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from daemon.input_listener import InputListener
+from effects.controller_reactive import BUTTON_GROUPS as _CTRL_BUTTON_GROUPS
+from effects.controller_reactive import DEFAULT_BACKGROUND as _CTRL_DEFAULT_BG
+from effects.controller_reactive import DEFAULT_DEADZONE as _CTRL_DEFAULT_DEADZONE
+from effects.controller_reactive import DEFAULT_GROUP_COLOR as _CTRL_DEFAULT_GROUP
 from effects.layout import cell_positions
+from hardware.controller import Controller
 from hardware.device import Keyboard, NUM_CELLS
 from hardware.lightbar import Lightbar
 
@@ -29,6 +34,7 @@ _KEYMAP_PATH = os.path.join(_PROJECT_ROOT, "keymap.json")
 _PRESETS_PATH = os.path.join(_PROJECT_ROOT, "presets.json")
 _LIGHTBAR_PRESETS_PATH = os.path.join(_PROJECT_ROOT, "lightbar_presets.json")
 _LIGHTBAR_REACTIVE_PATH = os.path.join(_PROJECT_ROOT, "lightbar_reactive.json")
+_CONTROLLER_REACTIVE_PATH = os.path.join(_PROJECT_ROOT, "controller_reactive.json")
 _CONFIG_PATH = os.path.join(_PROJECT_ROOT, "config.json")
 _GUI_DIR = os.path.join(_PROJECT_ROOT, "gui")
 _KEY_STATE_MAX_AGE = 5.0  # seconds of press history kept for effects to read
@@ -37,11 +43,17 @@ _REACTIVE_PRESS_MAX_AGE = 0.15  # seconds -- how long a keypress keeps its zone 
 
 _keyboard = None
 _lightbar = None
+_controller = None
 _effects = {}  # name -> render function
 _current_effect = "static"
 _current_params = {"color": (0, 0, 0)}
 _start_time = time.monotonic()
 _input_listener = None
+# Whatever (effect, params) was active right before controller_reactive was
+# enabled, so disabling it restores things exactly rather than falling back
+# to some generic default -- this effect is meant to fully override
+# whatever's running, not be "just another preset."
+_pre_controller_reactive_state = None
 _last_frame = []  # most recently rendered [r,g,b] per cell, for the GUI's live preview
 _last_sent_frame = None  # the frame actually written to hardware last, to skip redundant writes
 _frames_rendered = 0  # total render() calls since startup
@@ -168,7 +180,7 @@ def _hex_to_rgb(hex_str: str):
 
 @app.on_event("startup")
 async def startup():
-    global _keyboard, _lightbar, _input_listener, _current_effect, _current_params
+    global _keyboard, _lightbar, _controller, _input_listener, _current_effect, _current_params
     _load_effects()
     try:
         _keyboard = Keyboard()
@@ -189,6 +201,12 @@ async def startup():
     except Exception as e:
         print(f"[daemon] WARNING: running without lightbar -- {e}")
         _lightbar = None
+    try:
+        _controller = Controller()
+        print("[daemon] controller initialized")
+    except Exception as e:
+        print(f"[daemon] WARNING: running without controller -- {e}")
+        _controller = None
     try:
         _input_listener = InputListener(_KEYMAP_PATH)
         _input_listener.start()
@@ -214,6 +232,8 @@ async def _render_loop(fps: int = 30):
             frame_params = dict(_current_params)
             if _input_listener is not None:
                 frame_params["key_state"] = _input_listener.snapshot(_KEY_STATE_MAX_AGE)
+            if _controller is not None:
+                frame_params["controller_state"] = _controller.get_state()
             colors = _effects[_current_effect](t, NUM_CELLS, frame_params)
             _last_frame = colors
             _frames_rendered += 1
@@ -551,6 +571,7 @@ async def status():
     return {
         "hardware_connected": _keyboard is not None,
         "lightbar_connected": _lightbar is not None,
+        "controller_connected": _controller is not None and _controller.is_connected(),
         "current_effect": _current_effect,
         "params": _current_params,
         "num_cells": NUM_CELLS,
@@ -663,6 +684,134 @@ def set_default(req: DefaultRequest):
     config["default_preset"] = req.name
     with open(_CONFIG_PATH, "w") as f:
         json.dump(config, f, indent=2, sort_keys=True)
+    return {"ok": True}
+
+
+_CTRL_DEFAULT_STICK = {"idle": list(_CTRL_DEFAULT_GROUP), "tier1": list(_CTRL_DEFAULT_GROUP), "tier2": list(_CTRL_DEFAULT_GROUP)}
+
+
+class ControllerReactiveSettingsRequest(BaseModel):
+    background_enabled: bool = True
+    background_color: list
+    left_stick: dict = dict(_CTRL_DEFAULT_STICK)
+    right_stick: dict = dict(_CTRL_DEFAULT_STICK)
+    button_colors: dict = {}
+    deadzone: float = _CTRL_DEFAULT_DEADZONE
+
+
+def _controller_reactive_defaults() -> dict:
+    saved = _load_json(_CONTROLLER_REACTIVE_PATH)
+    saved_button_colors = saved.get("button_colors", {})
+
+    def stick_defaults(key):
+        saved_stick = saved.get(key, {})
+        return {band: saved_stick.get(band, list(_CTRL_DEFAULT_GROUP)) for band in ("idle", "tier1", "tier2")}
+
+    return {
+        "background_enabled": saved.get("background_enabled", True),
+        "background_color": saved.get("background_color", list(_CTRL_DEFAULT_BG)),
+        "left_stick": stick_defaults("left_stick"),
+        "right_stick": stick_defaults("right_stick"),
+        "button_colors": {
+            name: saved_button_colors.get(name, list(_CTRL_DEFAULT_GROUP))
+            for name in _CTRL_BUTTON_GROUPS
+        },
+        "deadzone": saved.get("deadzone", _CTRL_DEFAULT_DEADZONE),
+    }
+
+
+@app.get("/controller_reactive/button_groups")
+def controller_reactive_button_groups():
+    """Group names + the keys each one lights, so the GUI can build its
+    per-group color pickers without duplicating this list by hand."""
+    return _CTRL_BUTTON_GROUPS
+
+
+@app.get("/controller_reactive/defaults")
+def controller_reactive_hardcoded_defaults():
+    """The "Default" button's target values -- a single source of truth
+    shared with effects/controller_reactive.py's own fallback constants,
+    rather than the GUI hardcoding a second copy of these numbers."""
+    return {
+        "background_enabled": True,
+        "background_color": list(_CTRL_DEFAULT_BG),
+        "group_color": list(_CTRL_DEFAULT_GROUP),
+        "deadzone": _CTRL_DEFAULT_DEADZONE,
+    }
+
+
+@app.get("/controller_reactive/status")
+def controller_reactive_status():
+    return {
+        "connected": _controller is not None and _controller.is_connected(),
+        "enabled": _current_effect == "controller_reactive",
+    }
+
+
+@app.get("/controller_reactive/settings")
+def get_controller_reactive_settings():
+    return _controller_reactive_defaults()
+
+
+@app.post("/controller_reactive/settings")
+def set_controller_reactive_settings(req: ControllerReactiveSettingsRequest):
+    """Live-updates the running effect's colors without persisting --
+    use /controller_reactive/settings/save to actually save them."""
+    global _current_params
+    if _current_effect == "controller_reactive":
+        _current_params = {
+            **_current_params,
+            "background_enabled": req.background_enabled,
+            "background_color": req.background_color,
+            "left_stick": req.left_stick,
+            "right_stick": req.right_stick,
+            "button_colors": req.button_colors,
+            "deadzone": req.deadzone,
+        }
+    return {"ok": True}
+
+
+@app.post("/controller_reactive/settings/save")
+def save_controller_reactive_settings(req: ControllerReactiveSettingsRequest):
+    with open(_CONTROLLER_REACTIVE_PATH, "w") as f:
+        json.dump(
+            {
+                "background_enabled": req.background_enabled,
+                "background_color": req.background_color,
+                "left_stick": req.left_stick,
+                "right_stick": req.right_stick,
+                "button_colors": req.button_colors,
+                "deadzone": req.deadzone,
+            },
+            f, indent=2, sort_keys=True,
+        )
+    return {"ok": True}
+
+
+@app.post("/controller_reactive/enable")
+def enable_controller_reactive():
+    """Fully overrides whatever effect is currently running -- this is
+    deliberately NOT a regular preset (see /controller_reactive/settings
+    above for its own separate save mechanism) and always has to be
+    turned on manually, so there's no startup-default logic for it."""
+    global _current_effect, _current_params, _pre_controller_reactive_state
+    if _controller is None:
+        return {"ok": False, "error": "no controller connected"}
+    if _current_effect != "controller_reactive":
+        _pre_controller_reactive_state = (_current_effect, _current_params)
+    _current_effect = "controller_reactive"
+    _current_params = _controller_reactive_defaults()
+    return {"ok": True}
+
+
+@app.post("/controller_reactive/disable")
+def disable_controller_reactive():
+    global _current_effect, _current_params, _pre_controller_reactive_state
+    if _pre_controller_reactive_state is not None:
+        _current_effect, _current_params = _pre_controller_reactive_state
+        _pre_controller_reactive_state = None
+    else:
+        _current_effect, _current_params = "static", {"color": (0, 0, 0)}
     return {"ok": True}
 
 
