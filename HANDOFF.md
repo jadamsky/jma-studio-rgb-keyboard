@@ -1162,7 +1162,7 @@ to a file (`*> file.txt`) if the user needs to see a live on-screen cue
 -- redirecting silently blanks the visible console window, which
 caused real confusion/wasted attempts this session before being caught.
 
-## IN PROGRESS: real lightbar UI (started this session, position bug unresolved)
+## Real lightbar UI, round 1 (superseded -- see later sections for what it looks like now)
 
 User asked to redesign the lightbar window's UI to replicate a
 PredatorSense screenshot they shared (Static/Dynamic mode toggle,
@@ -1171,6 +1171,10 @@ illustration of the actual hardware with numbered zone markers, and a
 color panel: wheel + vertical brightness slider + swatches + RGB
 number inputs) -- in this project's own dark theme/fonts so it "feels
 the same" as the rest of the app, not copying PredatorSense's colors.
+The illustration built in this round (custom SVG trapezoid) was later
+completely replaced by an AI-generated image -- see "Lightbar
+illustration, take 2" below. Kept here for the single-instance/close-
+cascade/brightness work, which is still exactly as built.
 
 ### What's built and working
 
@@ -1235,105 +1239,48 @@ the same" as the rest of the app, not copying PredatorSense's colors.
   window-finding calls, on top of `hardware/lightbar.py` already
   needing it).
 
-### UNRESOLVED: lightbar window still doesn't open in the right position
+### RESOLVED: lightbar window position bug
 
-This went through several rounds and is **not fixed** -- last known
-state is a revert back to the ORIGINAL (simple, pre-this-session)
-positioning approach for the main window specifically, because an
-attempted fix broke something that "always worked":
+Went through 7 attempts across a session boundary before landing on the
+fix (full blow-by-blow no longer needed here -- the short version, in
+case a similar DPI issue ever resurfaces elsewhere in this app):
 
-1. First attempt: compute the lightbar's position as
-   `_initial_position() + (60, 60)`, called fresh inside
-   `Api.open_lightbar()` (which runs on pywebview's JS-bridge callback
-   thread, NOT the main thread). Result: user reported it started
-   "too low and too far right, part of it off screen."
-2. Second attempt: added `_clamp_to_screen()` to keep it on-screen
-   regardless. User reported "that didn't work" (though the very next
-   test the user ran DID look correctly positioned on screen -- possibly
-   a stale window from before the fix was still open when they judged
-   the first report; genuinely unclear which report reflects the fixed
-   code).
-3. Investigated further: found `Api.open_lightbar()`'s call to
-   `_initial_position()` was returning WILDLY different numbers than
-   the same call made in `main()` for the main window (e.g. main
-   window correctly at x=181, but a `main_x` of 730+ observed from
-   inside `open_lightbar()` on a supposedly-identical calculation) --
-   strong evidence of a **thread-local DPI-awareness or coordinate-
-   space inconsistency** between the main thread and the JS-bridge
-   callback thread pywebview invokes exposed `Api` methods on.
-4. Third attempt: stopped recomputing position inside
-   `open_lightbar()` entirely -- queried the main window's REAL current
-   rect via `win32gui.GetWindowRect` instead (found by title via
-   `FindWindow`). Still landed wrong (e.g. observed offset of +609 from
-   main instead of the intended +60) -- because `_clamp_to_screen()`
-   was still using `GetSystemMetrics` for screen bounds, which was
-   ITSELF reporting a DPI-virtualized (scaled-down) screen size
-   inconsistent with the TRUE-physical-pixel numbers `GetWindowRect`
-   returns from a DPI-aware caller. Confirmed directly: user's real
-   screen is **2560x1600**; this process's `GetSystemMetrics` was
-   reporting **1463x914** (almost exactly a 1.75x mismatch) -- so the
-   clamp was corrupting an otherwise-correct physical-pixel value using
-   fake/scaled screen bounds.
-5. Fourth attempt: called `ctypes.windll.shcore.SetProcessDpiAwareness(2)`
-   (PROCESS_PER_MONITOR_DPI_AWARE) at the very start of `main()`, before
-   any window/metrics work, on the theory that making the WHOLE process
-   DPI-aware would make every calculation agree on the same true-pixel
-   coordinate space. Confirmed `GetSystemMetrics` then correctly
-   reported 2560-wide, and the MAIN window relocated to x=730 (exactly
-   `(2560-1100)/2` -- mathematically "more correct" than the old x=181).
-   **But the user explicitly said this broke something that "always
-   started in the correct location" before** -- i.e. whatever the OLD
-   (non-DPI-aware) main-window placement was doing, it was landing
-   somewhere the user considered visually correct on the real screen,
-   despite being computed from the "wrong" 1463-wide virtualized
-   metrics. Forcing DPI-awareness fixed the math but broke the
-   real-world visual outcome for the one thing that was never broken.
-6. **Reverted** step 5's `_set_dpi_awareness()` call entirely (deleted,
-   not just disabled) to restore the main window's original, user-
-   confirmed-correct behavior. `_initial_position()` is back to its
-   original pre-session form (plain `GetSystemMetrics(0)`, no DPI
-   awareness change).
-7. For the lightbar's position specifically, landed on: compute
-   `_initial_position()` ONCE on the main thread inside `main()` (the
-   exact same call, same thread, same context that already produces
-   the correct main-window position), cache it in a module-level
-   `_main_window_pos` global, and have `Api.open_lightbar()` just READ
-   that cached tuple (+60, +60 offset, no clamping, no recomputation,
-   no cross-thread calls of any kind) rather than deriving anything
-   itself. This is the current state in the file. **NOT YET VERIFIED**
-   -- the GUI was restarted with this code right as the session ended
-   on a context-budget warning; the user was about to check it but
-   hadn't reported back yet when this was written.
+- Root cause was a **DPI-virtualization mismatch**: this process's
+  `GetSystemMetrics` reported a scaled-down screen size (1463x914) while
+  `GetWindowRect` returned true physical pixels (real screen: 2560x1600,
+  a 1.75x mismatch) -- mixing the two in the same calculation (e.g.
+  clamping a physical-pixel position against virtualized screen bounds)
+  produced wrong results.
+- A "more correct" fix (`SetProcessDpiAwareness(2)` to make the whole
+  process DPI-aware) was tried and **explicitly rejected by the user**
+  because it changed the MAIN window's position, which had always been
+  visually correct despite being computed from the "wrong" virtualized
+  metrics. Reverted entirely. **Lesson: a mathematically-more-correct
+  fix that changes previously-correct real-world behavior is not an
+  improvement -- revert it, don't defend the math.**
+- Final fix: compute the main window's position ONCE on the main thread
+  in `main()` (unchanged from before), cache it in a module-level
+  `_main_window_pos` global, and have `Api.open_lightbar()` (which runs
+  on pywebview's JS-bridge callback thread, a different thread with
+  apparently different DPI-awareness behavior) just READ that cached
+  value with a fixed offset -- no recomputation, no cross-thread calls.
+  Confirmed working by the user, then fine-tuned the offset down by
+  ~27px (0.25in on this 16in/2560x1600/~189-real-PPI panel) per explicit
+  follow-up feedback ("bring it up another .25 inch").
+- **Lesson reconfirmed for future diagnostics**: this bug went through
+  several rounds specifically because intermediate "looks right in my
+  own coordinate reading" checks (via PowerShell `GetWindowRect`
+  snippets) turned out to be measuring a different coordinate space than
+  what the user visually sees, more than once. Always verify by
+  restarting and asking the user to look, not by reading coordinates
+  programmatically.
 
-**Next session, in order:**
-1. Ask the user whether the lightbar window's position is now correct
-   with the current (7th attempt, cached-main-thread-value) code. If
-   yes, done -- clean up this section of HANDOFF.md down to a one-line
-   note.
-2. If still wrong: stop trying to compute an "offset from main"
-   automatically. The user twice offered "let me just move it where I
-   want and you read the value" -- take that offer immediately instead
-   of continuing to guess at the DPI/threading root cause. Read the
-   window's rect using the SAME technique already proven reliable for
-   diagnostics in this session (a separate PowerShell `Add-Type`
-   `EnumWindows`/`GetWindowRect` snippet -- see chat history for the
-   working version), while the user has it positioned where they want,
-   then hardcode that exact offset (or absolute position) rather than
-   computing anything.
-3. Whatever approach is used, **test by actually restarting gui.py and
-   asking the user to look**, every time -- this bug went through
-   several rounds specifically because intermediate "looks right in my
-   own coordinate reading" checks turned out to be measuring a
-   different coordinate space than what the user visually sees, twice.
-4. Once position is solid, remaining polish items (not urgent, not
-   requested yet, just noticed): the reference image's "info" (i)
-   tooltip icons are currently static/non-functional (just a `title`
-   attribute); the "eyedropper" icon from the reference wasn't
-   implemented at all; the illustration's zone divider lines are
-   straight verticals rather than perspective-matched to the trapezoid
-   (a cosmetic simplification, not reported as a problem).
+## Not done / possible next steps
 
-## Not done / possible next steps (nothing promised, just noted)
+See `BACKLOG.md` (project root) for the current list of open/parked
+items -- kept there instead of here so there's one place to check,
+rather than this file and a separate list drifting out of sync.
+Long-standing ones not yet moved into that file:
 
 - Standalone `.exe` build (PyInstaller or similar) for a real Windows
   taskbar icon -- flagged twice, not requested yet.
@@ -1563,3 +1510,292 @@ still produced a brightness spike; repeated for `#tr-bright` (a color
 picker); then opened the save-preset modal and confirmed its real text
 field still correctly reports `isTypingIntoTextField() === true` and
 still suppresses forwarding.
+
+## FIXED: two real gui.py bugs found while building the lightbar UI
+
+Both confirmed via direct reproduction before fixing, not just reasoned
+about -- see each section for the repro method.
+
+### Single-instance check was silently defeated by Python's own GC
+
+**Symptom**: user closed the app, then was able to open a second full
+instance immediately after -- the single-instance mutex (see the
+"real lightbar UI, round 1" section above) stopped working sometime
+after it was first verified.
+
+**Root cause**: `_acquire_single_instance_lock()` stored the mutex
+handle in a **local variable**. The instant the function returned, its
+refcount hit zero and pywin32's `PyHANDLE.__del__` closed the underlying
+handle -- destroying the named mutex within microseconds of every
+launch, despite the code's own comment claiming it was "deliberately
+never closed." Confirmed with an isolated repro (a tiny script mirroring
+just this pattern) before touching the real code: two processes 5+
+seconds apart both reported "not already running" when the handle was a
+local var, and correctly detected each other when it was a module-level
+global.
+
+**Fix applied**: added a module-level `_instance_mutex` global that the
+handle is assigned to, keeping a live reference for the whole process
+lifetime -- matching what the code always intended.
+
+**Verified**: relaunched twice with a 6s gap; the second launch's
+processes (launcher stub + real interpreter) started, hit the mutex
+check, and exited cleanly without creating a window, leaving only the
+first instance's "JMA Studio" window running.
+
+### Closing the app took 2+ seconds instead of feeling instant
+
+**Symptom**: user noticed closing the main window (X button) took
+"more than three seconds," and correctly guessed it started around the
+close-cascade feature.
+
+**Root cause, found by direct timing instrumentation** (not guessed):
+added a timestamped log line inside the `closed` event's callback and
+compared it against an external stopwatch that sent `WM_CLOSE` --
+the callback itself fired in ~7ms (essentially instant), but the
+process took ~2s MORE to actually disappear after calling `os._exit(0)`.
+Reproduced with a bare minimal pywebview script (no custom code at all)
+calling `os._exit(0)` after `webview.start()` returns: also ~2.3s. A
+vanilla script with NO `os._exit()` anywhere, just letting the
+interpreter exit normally: ~0.5s. So `os._exit()` itself -- not
+anything about the close-cascade logic -- was the slow part. Likely
+cause: WebView2's Chromium child (GPU/renderer) processes are tied to
+the parent via a Windows Job Object, and Windows waits through that
+teardown on an abrupt kill, but not on a normal cooperative exit.
+
+**Fix applied** (`gui.py`): the main window's `closed` handler now
+calls `.destroy()` on any other open pywebview window (the lightbar)
+instead of `os._exit(0)` -- this routes through pywebview's own normal
+per-window close path. Once every window is gone, `webview.start()`
+returns on its own and the script just falls off the end, letting the
+interpreter exit normally. No `os._exit()` anywhere in the file anymore.
+
+**Verified**: same WM_CLOSE-to-process-gone timing method as above, on
+the real `gui.py`: ~0.6s, both with only the main window open and with
+the lightbar window open too (confirming the cascade-close still works,
+just through the fast path).
+
+## Lightbar illustration, take 2: AI-generated image + dynamic recoloring
+
+The custom SVG illustration from "real lightbar UI, round 1" above (a
+hand-drawn trapezoid with a repeating vent pattern) never satisfied the
+user -- several rounds of SVG refinement (metallic gradients, per-cell
+radial "backlit" glow, circuit-trace patterns, ambient bloom filters)
+each looked better in isolation but still read as "obviously not real
+hardware" next to the actual PredatorSense reference screenshot.
+
+**Approach that finally worked**: stopped trying to hand-draw a
+convincing metal/circuit-board texture in SVG, and instead had the user
+generate a real image with an AI tool (Gemini), using a prompt this
+session wrote after one bad first attempt (the first prompt asked for
+"vector" style, which fought against the reference's actual look --
+a realistic 3D hardware render, not a flat icon; the corrected prompt
+asked for "realistic 3D render / product visualization style" instead
+and got a genuinely convincing result on the first try).
+
+- **`gui/lightbar_bar.png`**: the AI-generated image, background-removed
+  via a custom script (not a naive white-threshold) -- computes alpha
+  from each pixel's distance from pure white using the MIN channel, then
+  un-mixes the white contribution out of the remaining color so
+  semi-transparent soft-glow edges don't carry a white tint into the
+  final composite. A naive threshold would have left a visible white
+  halo/fringe around the glow's blur falloff; this doesn't.
+- **Dynamic per-zone recoloring**: since the image is a fixed
+  red/green/blue render, each zone is displayed as an independently
+  cropped copy of the same image with a CSS `hue-rotate`/`saturate`/
+  `brightness` filter computed live from the zone's actual RGB color.
+  The rotation math uses the REAL baseline hue sampled directly out of
+  the image per zone (354.3°/109.5°/215.4° for zone 1/2/3 -- see
+  `ZONE_BASE_HUE` in `gui/lightbar.html`), not assumed pure 0°/120°/240°,
+  since the AI-rendered colors weren't perfectly pure.
+- **Seam artifact found and fixed**: slicing one continuous image into
+  3 independently-rotated crops left a visible off-hue sliver right at
+  each zone boundary (rotating an already-mixed-hue pixel from the
+  original image's blend transition doesn't produce a sensible color).
+  Fixed the top glow strip by covering the image's own strip entirely
+  and drawing a fresh CSS gradient from the real target colors directly
+  (no rotation, no seam possible); softened the much smaller diamond-
+  glow-bleed seam with a masked crossfade between adjacent zone crops.
+
+**User's verdict after this whole pass**: "I think it is still off, but
+I want to move forward." Not blocking -- the actual color control works
+correctly, this is purely cosmetic. See `BACKLOG.md` for what's still
+open here (the user's specific objection was never pinned down before
+moving on; don't guess at another fix without asking what's wrong
+first).
+
+## Lightbar Presets (separate from the keyboard's)
+
+Mirrors the main window's Presets UX (save/apply/delete/set-default,
+`.card-grid`/`.preset-card`/`.modal`/`.actionbar` -- all reusing the
+main window's existing CSS) but for the lightbar, in its own store
+(`lightbar_presets.json`, `config.json`'s `lightbar_default_preset` key)
+completely independent of the keyboard's `presets.json`/`default_preset`
+-- this was a deliberate architecture choice (asked and confirmed with
+the user) rather than trying to make one preset capture both keyboard
+and lightbar state together.
+
+`hardware/lightbar.py`'s `Lightbar` class tracks its own last-commanded
+state (`get_state()`/`apply_state()`) so a preset captures whichever
+state is actually live right now -- originally just static per-zone
+colors + brightness, later extended (see "Lightbar Quick Effects" below)
+to also capture an active firmware animated mode, and extended again
+(see "Keyboard-reactive lightbar flashing" below) to also capture the
+reactive feature's on/off state and colors. Each extension kept older
+saved presets working via a `preset.get("lightbar", preset)`-style
+fallback on both the Python and JS sides, rather than requiring a
+migration.
+
+## Lightbar Quick Effects: real firmware-native animated modes
+
+User wanted a Quick Effects section like the keyboard's, populated with
+"the known built-in effects." Research found real firmware-native
+animated modes (not a software loop) via Venator
+(github.com/Exyons/Venator, already cited in
+`LIGHTBAR_REVERSE_ENGINEERING.md`) -- their kernel driver
+(`kernel/venator.h`) documents `SetGamingKBBacklight` mode byte values
+`0x01`-`0x07` for breathing/neon/rainbow/wave/ripple/scanner/strobe,
+with color embedded directly in that same 16-byte buffer.
+
+**This carried a real, flagged risk before testing**: that exact buffer
+shape (color at bytes 5-7) is ALSO what Venator documents for `mode=
+0xFF` ("static"), which this project's own reverse-engineering
+confirmed does NOT work on this chassis -- the real static breakthrough
+needed a completely separate `SetGamingRgbKb` call instead (see "SOLVED:
+the rear lightbar" earlier in this file). So the animated-mode byte
+values were a reasonable hypothesis (this file's own account of the
+original reverse-engineering separately says animated effects were
+"comparatively easy" via "a documented byte layout," almost certainly
+this one) but explicitly NOT assumed correct without live testing.
+
+**Tested live before building anything**: cycled modes 0x01-0x07 on the
+real hardware via a temporary endpoint, asked the user to watch and
+report back precisely (a first vague "seemed to be working" answer was
+followed up with a forced-choice question -- real animation vs. just
+static color changes -- to get an unambiguous answer). User confirmed
+genuine firmware-driven animation.
+
+**Built after confirming**: `Lightbar.set_mode()` + `MODES` dict,
+`POST /lightbar/mode`, and a "Quick Effects" chip grid in
+`gui/lightbar.html` that appears when the top bar's "Dynamic" toggle is
+selected (previously a disabled "Coming soon" placeholder, now live).
+**Important hardware constraint carried into the UI**: per Venator's own
+README, these firmware modes only support ONE color for the whole bar,
+not per-zone like Static -- so Dynamic mode hides the zone dropdown/pins
+and repurposes the existing color wheel as "the one color for the
+effect," pinned internally to `zoneColors[1]` so wheel drags and
+brightness changes correctly re-send `/lightbar/mode` with the live
+color instead of silently falling back to the static commit path (which
+would cancel the animation).
+
+**Verified**: via Playwright for the UI toggle/chip behavior, and via
+the daemon's real endpoints for the actual hardware calls. `off`/
+`static` modes were deliberately excluded from `MODES` since the
+existing `off()`/`set_zone()` path already covers those.
+
+## Keyboard-reactive lightbar flashing
+
+User's keyboard is split into 4 gradient zones (a `colors`+`boundaries`
+gradient preset, left to right). Asked for pressing a key in zones 1-3
+to flash the matching lightbar zone, zone 4 to flash all three --
+fully configurable colors (independent background color for all 3 zones
+at rest, an independent flash color per zone, a separate flash color for
+the zone-4/all case), explicitly NOT tied to the keyboard's own zone
+colors (those just describe the physical layout to map against).
+
+- **`Lightbar.flash_zones()`**: a fast, single-round zone write (no
+  3x-repeat/sleep cadence) since this runs on every tick of a
+  continuous background loop rather than as a one-shot "set and forget"
+  command -- a dropped write self-corrects on the next tick ~80-100ms
+  later, unlike a one-shot static command with no next tick to retry.
+- **`_lightbar_reactive_loop()`** in `daemon/server.py`: an async task
+  ticking at ~12.5Hz (`_REACTIVE_TICK`, matched to what the lightbar's
+  WMI protocol can actually sustain -- nowhere near the keyboard's
+  30fps), reading recent keypresses and mapping each to one of 4 zones
+  by column position against a set of boundaries captured once via
+  `POST /lightbar/reactive/capture_zones` (reads whatever gradient
+  boundaries are live on the keyboard right then -- a one-time snapshot,
+  not a live link; needs re-capturing if the keyboard's zone layout
+  changes later).
+- **Real gotcha hit and fixed while building this**: `InputListener.
+  snapshot(max_age)` prunes its internal press history to whatever
+  `max_age` is passed, as a side effect of being called. The reactive
+  loop originally would have called it with a short window (~0.15s),
+  which would have silently cut short the keyboard's OWN
+  `typing_reactive` decay/bolt-travel window (which needs several
+  seconds of history) every time the reactive loop ticked -- a subtle
+  cross-feature bug that would have been easy to ship without noticing
+  immediately. Fixed by having the reactive loop call `snapshot()` with
+  the SAME `_KEY_STATE_MAX_AGE` the keyboard's own render loop already
+  uses, then filtering the returned copy down to a shorter window
+  locally, rather than pruning the shared store at a different rate.
+- **Also hit**: restarting the daemon (needed to load this code) resets
+  the keyboard back to its saved default preset, which silently wiped
+  the user's live (unsaved) 4-zone gradient setup once. Recovered by
+  re-applying the exact gradient params recorded earlier in the
+  conversation before restarting. The user has since saved that exact
+  4-zone layout as a real keyboard preset (`"ZONES"` in `presets.json`),
+  so this specific risk shouldn't recur for this particular layout --
+  but the general risk (any daemon restart reverts unsaved live keyboard
+  state to the saved default) still applies for anything not saved.
+- **New "Reactive" panel** on the lightbar window: enable toggle + 5
+  color pickers, persisted to `lightbar_reactive.json`. Bundled into the
+  Presets system afterward (user pointed out the enable checkbox and
+  colors acted as a global setting with no way to save as part of a
+  preset) -- `POST /lightbar/presets/save` now captures both
+  `Lightbar.get_state()` AND the current reactive settings (background/
+  flash colors/enabled, but deliberately NOT `zone_boundaries`, which
+  describes the keyboard's own zone geometry rather than anything that
+  should vary preset to preset) into one `{"lightbar": ..., "reactive":
+  ...}` object; applying a preset restores both together. Presets saved
+  before this change are a flat dict with no `"lightbar"`/`"reactive"`
+  keys -- both the Python and JS sides fall back to treating the whole
+  object as the lightbar part for those, so nothing broke.
+
+**Verified precisely**: simulated presses in each of the 4 zones via the
+daemon's own `/keypress` endpoint (bypassing physical typing) and
+inspected the real resulting lightbar zone colors after each, confirming
+exact matches to the configured mapping and that it settles back to the
+background color once presses stop. User then confirmed it works on the
+real keyboard/lightbar.
+
+## Git: `stable` branch caught up to `main` (2026-09-08)
+
+Per the branching convention established earlier in this file (tag/fast-
+forward `stable` to match `main` at good checkpoints, rather than
+maintaining two diverging branches): committed this whole session's work
+(everything from "real lightbar UI, round 1" through "keyboard-reactive
+lightbar flashing" above) as a single commit on `main`, then fast-
+forwarded `stable` to match (`git branch -f stable main`). Both branches
+now point at the same commit locally. Not yet pushed to `origin` at time
+of writing -- see the live git status below/ask the user before pushing,
+since that's a shared-state action worth confirming each time rather
+than assuming.
+
+## Immediate live state as of writing this file (current, 2026-09-08)
+
+Verified directly against the running daemon just now:
+
+- Daemon running, `hardware_connected` and `lightbar_connected` both
+  true. Keyboard's live effect: `typing_reactive` wrapping the "Red
+  Chase" preset (`custom_keys` base + reactive chase on top) -- this is
+  `config.json`'s actual `default_preset`, so a normal reboot/relaunch
+  reproduces this exactly. The user's 4-zone red/green/blue/yellow
+  gradient (used to capture the reactive lightbar feature's zone
+  boundaries) is saved separately as the `"ZONES"` preset in
+  `presets.json` -- apply that one to bring it back live if needed.
+- Lightbar: currently showing whatever the `"BLUE"` preset last set (a
+  static 3-zone blue/cyan look). The keyboard-reactive lightbar feature
+  is **enabled** right now with the user's own configured colors
+  (background `#0008ff`, all three zone-flash colors red, zone-4/all
+  flash `#fb00ff`) -- typing on the real keyboard will flash the
+  lightbar per the "Keyboard-reactive lightbar flashing" section above.
+- Git: `main` and `stable` both at commit `af3bf95` ("Add lightbar UI,
+  presets, firmware animation modes, and keyboard-reactive flashing"),
+  2 commits ahead of `origin/main`/`origin/stable`. Not yet pushed --
+  ask before pushing, per the note in the git section above.
+- User's own words at this point: "everything is stable time to commit
+  this to stable" (done, see above), then asked for this file to be
+  fully brought current (this whole set of sections, done), and
+  mentioned "another big project after this" -- nothing further
+  specified yet as of this writing.
