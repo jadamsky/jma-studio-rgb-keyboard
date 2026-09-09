@@ -6,3 +6,4 @@ keyboard>=0.13.5
 pystray>=0.19.5
 pillow>=10.0
 pywebview>=6.0
+pywin32>=306

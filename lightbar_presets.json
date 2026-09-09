@@ -1,0 +1,54 @@
+{
+  "BLUE": {
+    "brightness": 100,
+    "colors": {
+      "1": [
+        0,
+        15,
+        255
+      ],
+      "2": [
+        0,
+        255,
+        242
+      ],
+      "3": [
+        0,
+        15,
+        255
+      ]
+    }
+  },
+  "Rainbow": {
+    "brightness": 100,
+    "color": [
+      255,
+      0,
+      0
+    ],
+    "mode": "rainbow",
+    "speed": 5,
+    "type": "mode"
+  },
+  "Red flashing": {
+    "brightness": 100,
+    "colors": {
+      "1": [
+        0,
+        8,
+        255
+      ],
+      "2": [
+        0,
+        8,
+        255
+      ],
+      "3": [
+        0,
+        8,
+        255
+      ]
+    },
+    "type": "static"
+  }
+}

@@ -5,3 +5,4 @@ __pycache__/
 reference/
 .claude/
 lightbar_experiments/
+*.lnk

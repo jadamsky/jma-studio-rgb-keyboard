@@ -1162,6 +1162,177 @@ to a file (`*> file.txt`) if the user needs to see a live on-screen cue
 -- redirecting silently blanks the visible console window, which
 caused real confusion/wasted attempts this session before being caught.
 
+## IN PROGRESS: real lightbar UI (started this session, position bug unresolved)
+
+User asked to redesign the lightbar window's UI to replicate a
+PredatorSense screenshot they shared (Static/Dynamic mode toggle,
+brightness slider with sun icons, a "Select Zone" dropdown, a visual
+illustration of the actual hardware with numbered zone markers, and a
+color panel: wheel + vertical brightness slider + swatches + RGB
+number inputs) -- in this project's own dark theme/fonts so it "feels
+the same" as the rest of the app, not copying PredatorSense's colors.
+
+### What's built and working
+
+- **`gui/lightbar.html`** completely rewritten (the old 4-separate-
+  wheels test layout is gone). New interaction model: ONE zone
+  dropdown (Zone 1/2/3/All Zones) + ONE color wheel that edits
+  whichever zone is currently selected -- matches the reference image,
+  and is a real UX improvement over "4 wheels visible at once."
+  - Custom-drawn SVG illustration: a trapezoid shape with a repeating
+    vertical-line "vent" pattern (an SVG `<pattern>`), divided into 3
+    zone polygons whose `fill` is updated live to match each zone's
+    actual current color, plus a thin gradient bar above summarizing
+    all 3 zones' colors, plus 3 numbered "pin" buttons below (also
+    clickable to select that zone, alongside the dropdown).
+  - HSV color wheel (canvas, hue=angle/saturation=radius/value=1,
+    reused from the earlier version) + a **vertical** brightness/value
+    slider next to it (CSS `-webkit-appearance: slider-vertical` --
+    works fine in WebView2/Chromium) -- matches the reference's layout
+    (previous version had a horizontal slider under each wheel).
+  - Swatch row: an "off" swatch (turns the selected zone/all zones to
+    black), a few default preset colors, and a "+" button that saves
+    the CURRENTLY shown color as a new persistent swatch via
+    `localStorage` -- same pattern as the existing Custom Key Colors
+    editor's "recently used colors" feature in `gui/app.js`, kept
+    consistent on purpose.
+  - R/G/B numeric inputs, kept in sync with the wheel both ways.
+  - Static/Dynamic mode toggle: Static is fully wired; Dynamic is
+    present but `disabled` with a "Coming soon" tooltip -- animated
+    lightbar effects (breathing/wave/etc., confirmed working back when
+    the protocol was first reverse-engineered) were deliberately NOT
+    wired up this session; this is an honest placeholder, not a fake
+    control.
+- **Real brightness control wired end-to-end** (previously hardcoded
+  to 100 in `hardware/lightbar.py`): `Lightbar` now stores
+  `self._brightness`, `set_brightness(value)` updates it and re-
+  commits with the CURRENT colors; new daemon endpoint
+  `POST /lightbar/brightness {value}`; the top-bar slider in
+  `lightbar.html` posts to it (throttled ~150ms during drag).
+- **Single-instance enforcement** (`gui.py`): a named Win32 mutex
+  (`JMAStudioGUI_SingleInstance`, per-user not `Global\\`) acquired at
+  startup via `win32event.CreateMutex` + checking
+  `win32api.GetLastError() == 183` (`ERROR_ALREADY_EXISTS`). If another
+  instance already holds it, this one finds the existing main window
+  via `win32gui.FindWindow(None, "JMA Studio")`, restores it if
+  minimized, calls `SetForegroundWindow`, and exits immediately without
+  creating any window. **Verified working**: launching a second
+  instance's processes exit cleanly within ~2s of detecting the mutex.
+  Caveat noted to the user but not re-verified: Windows can sometimes
+  block a background process from stealing foreground focus (a built-
+  in anti-annoyance restriction) -- `SetForegroundWindow` might
+  silently no-op in some contexts; not confirmed either way whether
+  this actually happens here.
+- **Closing the main window closes everything** (`gui.py`):
+  `main_window.events.closed += lambda: os._exit(0)` -- pywebview
+  otherwise keeps the process alive until every open window is closed
+  individually, which orphaned the lightbar window before this.
+  **Verified working** by the user (closed main, lightbar window
+  disappeared too).
+- **`pywin32` added to `requirements.txt`** (was previously only
+  installed ad hoc in `.venv`, flagged as a "not done yet" item earlier
+  -- now formalized, since `gui.py` needs it too now for the mutex/
+  window-finding calls, on top of `hardware/lightbar.py` already
+  needing it).
+
+### UNRESOLVED: lightbar window still doesn't open in the right position
+
+This went through several rounds and is **not fixed** -- last known
+state is a revert back to the ORIGINAL (simple, pre-this-session)
+positioning approach for the main window specifically, because an
+attempted fix broke something that "always worked":
+
+1. First attempt: compute the lightbar's position as
+   `_initial_position() + (60, 60)`, called fresh inside
+   `Api.open_lightbar()` (which runs on pywebview's JS-bridge callback
+   thread, NOT the main thread). Result: user reported it started
+   "too low and too far right, part of it off screen."
+2. Second attempt: added `_clamp_to_screen()` to keep it on-screen
+   regardless. User reported "that didn't work" (though the very next
+   test the user ran DID look correctly positioned on screen -- possibly
+   a stale window from before the fix was still open when they judged
+   the first report; genuinely unclear which report reflects the fixed
+   code).
+3. Investigated further: found `Api.open_lightbar()`'s call to
+   `_initial_position()` was returning WILDLY different numbers than
+   the same call made in `main()` for the main window (e.g. main
+   window correctly at x=181, but a `main_x` of 730+ observed from
+   inside `open_lightbar()` on a supposedly-identical calculation) --
+   strong evidence of a **thread-local DPI-awareness or coordinate-
+   space inconsistency** between the main thread and the JS-bridge
+   callback thread pywebview invokes exposed `Api` methods on.
+4. Third attempt: stopped recomputing position inside
+   `open_lightbar()` entirely -- queried the main window's REAL current
+   rect via `win32gui.GetWindowRect` instead (found by title via
+   `FindWindow`). Still landed wrong (e.g. observed offset of +609 from
+   main instead of the intended +60) -- because `_clamp_to_screen()`
+   was still using `GetSystemMetrics` for screen bounds, which was
+   ITSELF reporting a DPI-virtualized (scaled-down) screen size
+   inconsistent with the TRUE-physical-pixel numbers `GetWindowRect`
+   returns from a DPI-aware caller. Confirmed directly: user's real
+   screen is **2560x1600**; this process's `GetSystemMetrics` was
+   reporting **1463x914** (almost exactly a 1.75x mismatch) -- so the
+   clamp was corrupting an otherwise-correct physical-pixel value using
+   fake/scaled screen bounds.
+5. Fourth attempt: called `ctypes.windll.shcore.SetProcessDpiAwareness(2)`
+   (PROCESS_PER_MONITOR_DPI_AWARE) at the very start of `main()`, before
+   any window/metrics work, on the theory that making the WHOLE process
+   DPI-aware would make every calculation agree on the same true-pixel
+   coordinate space. Confirmed `GetSystemMetrics` then correctly
+   reported 2560-wide, and the MAIN window relocated to x=730 (exactly
+   `(2560-1100)/2` -- mathematically "more correct" than the old x=181).
+   **But the user explicitly said this broke something that "always
+   started in the correct location" before** -- i.e. whatever the OLD
+   (non-DPI-aware) main-window placement was doing, it was landing
+   somewhere the user considered visually correct on the real screen,
+   despite being computed from the "wrong" 1463-wide virtualized
+   metrics. Forcing DPI-awareness fixed the math but broke the
+   real-world visual outcome for the one thing that was never broken.
+6. **Reverted** step 5's `_set_dpi_awareness()` call entirely (deleted,
+   not just disabled) to restore the main window's original, user-
+   confirmed-correct behavior. `_initial_position()` is back to its
+   original pre-session form (plain `GetSystemMetrics(0)`, no DPI
+   awareness change).
+7. For the lightbar's position specifically, landed on: compute
+   `_initial_position()` ONCE on the main thread inside `main()` (the
+   exact same call, same thread, same context that already produces
+   the correct main-window position), cache it in a module-level
+   `_main_window_pos` global, and have `Api.open_lightbar()` just READ
+   that cached tuple (+60, +60 offset, no clamping, no recomputation,
+   no cross-thread calls of any kind) rather than deriving anything
+   itself. This is the current state in the file. **NOT YET VERIFIED**
+   -- the GUI was restarted with this code right as the session ended
+   on a context-budget warning; the user was about to check it but
+   hadn't reported back yet when this was written.
+
+**Next session, in order:**
+1. Ask the user whether the lightbar window's position is now correct
+   with the current (7th attempt, cached-main-thread-value) code. If
+   yes, done -- clean up this section of HANDOFF.md down to a one-line
+   note.
+2. If still wrong: stop trying to compute an "offset from main"
+   automatically. The user twice offered "let me just move it where I
+   want and you read the value" -- take that offer immediately instead
+   of continuing to guess at the DPI/threading root cause. Read the
+   window's rect using the SAME technique already proven reliable for
+   diagnostics in this session (a separate PowerShell `Add-Type`
+   `EnumWindows`/`GetWindowRect` snippet -- see chat history for the
+   working version), while the user has it positioned where they want,
+   then hardcode that exact offset (or absolute position) rather than
+   computing anything.
+3. Whatever approach is used, **test by actually restarting gui.py and
+   asking the user to look**, every time -- this bug went through
+   several rounds specifically because intermediate "looks right in my
+   own coordinate reading" checks turned out to be measuring a
+   different coordinate space than what the user visually sees, twice.
+4. Once position is solid, remaining polish items (not urgent, not
+   requested yet, just noticed): the reference image's "info" (i)
+   tooltip icons are currently static/non-functional (just a `title`
+   attribute); the "eyedropper" icon from the reference wasn't
+   implemented at all; the illustration's zone divider lines are
+   straight verticals rather than perspective-matched to the trapezoid
+   (a cosmetic simplification, not reported as a problem).
+
 ## Not done / possible next steps (nothing promised, just noted)
 
 - Standalone `.exe` build (PyInstaller or similar) for a real Windows

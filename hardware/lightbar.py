@@ -43,6 +43,20 @@ _LED_PAYLOAD = [0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x15, 0x00
 _ZONE_MASKS = {1: 1, 2: 2, 3: 4}
 NUM_ZONES = 3
 
+# Firmware-native animated mode IDs (SetGamingKBBacklight byte 0), per
+# Venator's kernel driver -- see set_mode()'s docstring for the full
+# context. "off"/"static" are excluded here since those are handled by
+# the existing off()/set_zone() static-color path, not set_mode().
+MODES = {
+    "breathing": 0x01,
+    "neon": 0x02,
+    "rainbow": 0x03,
+    "wave": 0x04,
+    "ripple": 0x05,
+    "scanner": 0x06,
+    "strobe": 0x07,
+}
+
 # How many times to repeat the full commit sequence, and the delay
 # between repeats -- matches Acer's own real software's cadence
 # exactly (captured live), presumably for reliability against this
@@ -91,6 +105,14 @@ class Lightbar:
                 "provider isn't available in this process."
             )
         self._colors = {zone: (0, 0, 0) for zone in _ZONE_MASKS}
+        self._brightness = 100
+        # None when the static per-zone commit is the last thing sent;
+        # otherwise one of MODES' keys -- lets get_state()/apply_state()
+        # (used by presets) capture and restore an active animated mode,
+        # not just static colors.
+        self._mode = None
+        self._mode_color = (255, 0, 0)
+        self._mode_speed = 5
         self._local = threading.local()
 
     # ---- low-level wire helpers ----------------------------------------
@@ -129,14 +151,42 @@ class Lightbar:
         value = (r << 8) | (g << 16) | (b << 24) | (0x08 << 32) | (mask << 40)
         return self._call_u64("SetGamingRgbKb", value)
 
-    def _commit(self, brightness: int = 100):
+    def _commit(self):
         for _ in range(_COMMIT_ROUNDS):
             self._send_led()
-            self._send_kb_commit(brightness)
+            self._send_kb_commit(self._brightness)
             for zone, mask in _ZONE_MASKS.items():
                 r, g, b = self._colors[zone]
                 self._send_rgbkb(mask, r, g, b)
             time.sleep(_COMMIT_ROUND_DELAY)
+
+    # ---- firmware-native animated modes -----------------------------------
+    #
+    # Mode byte values documented by Venator (github.com/Exyons/Venator)'s
+    # kernel driver, with color embedded directly in the same 16-byte
+    # SetGamingKBBacklight buffer (bytes 5-7 = R,G,B) that Venator also
+    # documents for mode=0xFF ("static") -- which our own reverse-
+    # engineering confirmed does NOT work on this chassis (static color
+    # here needs the separate SetGamingRgbKb call instead). These animated
+    # values were confirmed live on real hardware (2026-09-08): the
+    # firmware genuinely animates on its own -- this is not a software
+    # loop. Only ONE color for the whole bar is possible in these modes
+    # (confirmed by Venator's own README, and consistent with what we see:
+    # no per-zone control once a mode other than the static commit is
+    # active).
+    def set_mode(self, mode: str, r: int, g: int, b: int, speed: int = 5, brightness: int = 100):
+        if mode not in MODES:
+            raise ValueError(f"mode must be one of {sorted(MODES)}, got {mode!r}")
+        brightness = max(0, min(100, brightness))
+        buf = [MODES[mode], speed, brightness, 0x00, 0x01, r, g, b, 0x03, 0x02, 0, 0, 0, 0, 0, 0]
+        for _ in range(_COMMIT_ROUNDS):
+            self._send_led()
+            self._call_array("SetGamingKBBacklight", buf)
+            time.sleep(_COMMIT_ROUND_DELAY)
+        self._mode = mode
+        self._mode_color = (r, g, b)
+        self._mode_speed = speed
+        self._brightness = brightness
 
     # ---- public API ------------------------------------------------------
 
@@ -144,12 +194,87 @@ class Lightbar:
         if zone not in _ZONE_MASKS:
             raise ValueError(f"zone must be one of {sorted(_ZONE_MASKS)}, got {zone}")
         self._colors[zone] = (r, g, b)
+        self._mode = None
         self._commit()
 
     def set_all(self, r: int, g: int, b: int):
         for zone in _ZONE_MASKS:
             self._colors[zone] = (r, g, b)
+        self._mode = None
         self._commit()
+
+    def flash_zones(self, targets: dict):
+        """Fast single-round zone update for the keyboard-reactive
+        lightbar loop -- skips the 3x-repeat/sleep cadence _commit()
+        uses for "set and forget" reliability. That cadence would cap a
+        reactive loop at ~5Hz (3 * 65ms just for one write); a single
+        round trip here is fast enough for a ~10-12Hz loop, and a
+        dropped/lost write self-corrects on the next tick ~80-100ms
+        later anyway, unlike a one-shot static command with no next
+        tick to retry on. `targets` is {zone: (r,g,b)} for one or more
+        zones; zones not included keep their last-known color."""
+        self._mode = None
+        for zone, rgb in targets.items():
+            if zone not in _ZONE_MASKS:
+                raise ValueError(f"zone must be one of {sorted(_ZONE_MASKS)}, got {zone}")
+            self._colors[zone] = tuple(rgb)
+        self._send_led()
+        self._send_kb_commit(self._brightness)
+        for zone, mask in _ZONE_MASKS.items():
+            r, g, b = self._colors[zone]
+            self._send_rgbkb(mask, r, g, b)
+
+    def set_brightness(self, value: int):
+        """0-100, matches the scale this hardware's brightness byte
+        actually uses (confirmed during reverse-engineering -- see
+        HANDOFF.md). Re-applies immediately with the current colors --
+        if an animated mode is active, re-sends THAT (with the new
+        brightness) instead of falling through to a static commit, which
+        would silently cancel the animation."""
+        value = max(0, min(100, value))
+        if self._mode is not None:
+            r, g, b = self._mode_color
+            self.set_mode(self._mode, r, g, b, self._mode_speed, value)
+        else:
+            self._brightness = value
+            self._commit()
 
     def off(self):
         self.set_all(0, 0, 0)
+
+    def get_state(self) -> dict:
+        """Snapshot of the last-commanded state, for saving as a preset --
+        either the active animated mode, or the static per-zone colors,
+        whichever is actually live right now."""
+        if self._mode is not None:
+            return {
+                "type": "mode",
+                "mode": self._mode,
+                "color": list(self._mode_color),
+                "speed": self._mode_speed,
+                "brightness": self._brightness,
+            }
+        return {
+            "type": "static",
+            "colors": {str(zone): list(rgb) for zone, rgb in self._colors.items()},
+            "brightness": self._brightness,
+        }
+
+    def apply_state(self, state: dict):
+        """Restores a state previously captured by get_state() -- either
+        an animated mode or static per-zone colors, in a single commit."""
+        if state.get("type") == "mode":
+            r, g, b = state.get("color", (255, 0, 0))
+            self.set_mode(state["mode"], r, g, b, state.get("speed", 5), state.get("brightness", 100))
+            return
+        colors = state.get("colors", {})
+        for zone_str, rgb in colors.items():
+            zone = int(zone_str)
+            if zone not in _ZONE_MASKS:
+                raise ValueError(f"zone must be one of {sorted(_ZONE_MASKS)}, got {zone}")
+            self._colors[zone] = tuple(rgb)
+        brightness = state.get("brightness")
+        if brightness is not None:
+            self._brightness = max(0, min(100, brightness))
+        self._mode = None
+        self._commit()

@@ -1,0 +1,35 @@
+{
+  "all_flash_color": [
+    251,
+    0,
+    255
+  ],
+  "background_color": [
+    0,
+    8,
+    255
+  ],
+  "enabled": true,
+  "zone_boundaries": [
+    4,
+    8,
+    10.75
+  ],
+  "zone_flash_colors": {
+    "1": [
+      255,
+      0,
+      0
+    ],
+    "2": [
+      255,
+      0,
+      0
+    ],
+    "3": [
+      255,
+      0,
+      0
+    ]
+  }
+}

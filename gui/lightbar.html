@@ -7,51 +7,207 @@
 <link rel="stylesheet" href="style.css">
 <style>
   body { padding: 20px 24px 28px; }
-  h1 {
-    font-size: 18px;
-    margin: 0 0 4px;
-    background: var(--accent-grad);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-  .subtitle { color: var(--text-muted); font-size: 12px; margin: 0 0 20px; }
 
-  .wheel-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 18px;
-  }
-
-  .wheel-card {
-    background: var(--panel);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius);
-    padding: 14px;
+  .lb-topbar {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
+    padding-bottom: 16px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--panel-border);
   }
 
-  .wheel-card.all-zones {
-    grid-column: 1 / -1;
-  }
+  .mode-toggle { display: flex; gap: 8px; }
 
-  .wheel-title {
-    font-size: 13px;
-    font-weight: 600;
+  .mode-btn {
     display: flex;
     align-items: center;
     gap: 8px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255,255,255,0.03);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .mode-btn .diamond {
+    width: 8px; height: 8px;
+    transform: rotate(45deg);
+    background: var(--text-muted);
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .mode-btn.active {
+    background: rgba(255,255,255,0.07);
+    color: var(--text);
+    border-color: rgba(255,255,255,0.18);
+  }
+  .mode-btn.active .diamond { background: var(--accent-grad); }
+  .mode-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+
+  .brightness-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 220px;
+  }
+  .brightness-control svg { flex-shrink: 0; color: var(--text-muted); }
+  .brightness-control input[type="range"] { flex: 1; }
+
+  .lb-body {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 28px;
+    align-items: start;
   }
 
-  .swatch {
-    width: 14px;
-    height: 14px;
+  .zone-select-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .zone-select-row select { min-width: 180px; }
+  .info-dot {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    border: 1px solid var(--panel-border);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-style: italic;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    cursor: default;
+  }
+
+  .lb-illustration-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 3532 / 828;
+    overflow: hidden;
     border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.25);
-    background: #000;
+  }
+  /* Each zone crop is widened slightly past its natural third and overlaps
+     its neighbor, with a mask fade across that overlap -- each diamond's
+     own soft glow bleeds sideways past its zone's own segments, and a hard
+     crop edge left a small wrong-hue blip wherever zone N's bleed crossed
+     into zone N+1's independently-rotated crop. Crossfading the overlap
+     blends the two instead of hard-cutting between them. */
+  .lb-zone-crop {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+  .lb-zone-crop:nth-child(1) {
+    left: 0%; width: 36.334%;
+    -webkit-mask-image: linear-gradient(to right, black 0%, black 83.5%, transparent 100%);
+            mask-image: linear-gradient(to right, black 0%, black 83.5%, transparent 100%);
+  }
+  .lb-zone-crop:nth-child(2) {
+    left: 30.334%; width: 39.332%;
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 15.3%, black 84.7%, transparent 100%);
+            mask-image: linear-gradient(to right, transparent 0%, black 15.3%, black 84.7%, transparent 100%);
+  }
+  .lb-zone-crop:nth-child(3) {
+    left: 63.666%; width: 36.334%;
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 16.5%, black 100%);
+            mask-image: linear-gradient(to right, transparent 0%, black 16.5%, black 100%);
+  }
+  .lb-illustration-img {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    display: block;
+  }
+  .lb-zone-crop:nth-child(1) .lb-illustration-img { left: 0%; width: 275.24%; }
+  .lb-zone-crop:nth-child(2) .lb-illustration-img { left: -77.15%; width: 254.25%; }
+  .lb-zone-crop:nth-child(3) .lb-illustration-img { left: -175.24%; width: 275.24%; }
+
+  /* The source image's own top glow strip is ONE continuous gradient
+     drawn across all 3 zones -- slicing it into 3 independently
+     hue-rotated thirds left a visible off-hue sliver right at each seam
+     (rotating an already-mixed red/green transition pixel doesn't
+     produce a sensible color). Instead of trying to blend that seam,
+     this covers the image's own strip entirely and draws a fresh one
+     from the real target colors directly -- no rotation, no mixing,
+     no seam possible. */
+  .lb-strip-cover {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 31%;
+    background: #0b0b12;
+    z-index: 2;
+  }
+  .lb-strip-glow-wide {
+    position: absolute;
+    left: 4%; right: 4%;
+    top: 16%;
+    height: 11%;
+    border-radius: 999px;
+    filter: blur(9px);
+    opacity: 0.9;
+    z-index: 3;
+  }
+  .lb-strip-glow-core {
+    position: absolute;
+    left: 4%; right: 4%;
+    top: 20.5%;
+    height: 2.2%;
+    border-radius: 999px;
+    z-index: 3;
+  }
+
+  .zone-pins {
+    display: flex;
+    justify-content: space-around;
+    padding: 0 40px;
+    margin-top: 6px;
+  }
+  .zone-pin {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+  }
+  .zone-pin .pin-tick {
+    width: 1px; height: 14px;
+    background: var(--panel-border);
+  }
+  .zone-pin .pin-badge {
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .zone-pin.selected .pin-badge {
+    background: var(--accent-grad);
+    color: white;
+    border-color: transparent;
+  }
+
+  .color-panel-heading {
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0 0 16px;
+    color: var(--text);
+  }
+
+  .wheel-row {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    justify-content: center;
   }
 
   canvas.wheel {
@@ -60,90 +216,241 @@
     touch-action: none;
   }
 
-  .brightness-row {
-    width: 100%;
+  input.vertical-slider {
+    -webkit-appearance: slider-vertical;
+    width: 22px;
+    height: 190px;
+  }
+
+  .swatch-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-  }
-
-  .brightness-row span {
-    font-size: 11px;
-    color: var(--text-muted);
-    width: 34px;
-  }
-
-  input[type="range"] {
-    flex: 1;
-    accent-color: var(--accent-b);
-  }
-
-  .off-row {
-    margin-top: 18px;
-    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 20px 0 18px;
     justify-content: center;
   }
 
+  .swatch-btn {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.2);
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  .swatch-btn.off-swatch {
+    background: #1a1a26;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--danger);
+  }
+  .swatch-btn.add-swatch {
+    background: rgba(255,255,255,0.05);
+    color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    line-height: 1;
+    border-style: dashed;
+  }
+
+  .rgb-inputs {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+  }
+  .rgb-field {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .rgb-field span { font-size: 11px; color: var(--text-muted); }
+  .rgb-field input {
+    width: 52px;
+    text-align: center;
+    padding: 6px 4px;
+    border-radius: 6px;
+    background: #1a1a26;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  .lb-section { margin-top: 22px; }
+
+  .reactive-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+  }
+  .reactive-field {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .reactive-field span { font-size: 11px; color: var(--text-muted); }
+  .reactive-field input[type="color"] {
+    width: 44px;
+    height: 32px;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid var(--panel-border);
+    background: #1a1a26;
+    cursor: pointer;
+  }
+
+  #lb-effect-row { margin-bottom: 10px; }
+  #lb-effect-grid { margin-bottom: 22px; }
+
   #status-log {
-    margin-top: 14px;
+    margin-top: 16px;
     font-size: 11px;
     color: var(--text-muted);
     text-align: center;
-    min-height: 16px;
+    min-height: 14px;
   }
 </style>
 </head>
 <body>
 
-<h1>Lightbar</h1>
-<p class="subtitle">Click or drag on a wheel to set that zone's color. Viewed from the front of the laptop with the lid up.</p>
+<div class="lb-topbar">
+  <div class="mode-toggle">
+    <button class="mode-btn active" id="mode-static"><span class="diamond"></span>Static</button>
+    <button class="mode-btn" id="mode-dynamic"><span class="diamond"></span>Dynamic</button>
+  </div>
+  <div class="brightness-control">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="4"/>
+    </svg>
+    <input type="range" id="brightness" min="0" max="100" value="100">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="5"/>
+      <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+      <line x1="4.2" y1="4.2" x2="5.6" y2="5.6"/><line x1="18.4" y1="18.4" x2="19.8" y2="19.8"/>
+      <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+      <line x1="4.2" y1="19.8" x2="5.6" y2="18.4"/><line x1="18.4" y1="5.6" x2="19.8" y2="4.2"/>
+    </svg>
+  </div>
+</div>
 
-<div class="wheel-grid">
-  <div class="wheel-card" id="card-1">
-    <div class="wheel-title"><span class="swatch" id="swatch-1"></span>Zone 1 -- Left</div>
-    <canvas class="wheel" id="wheel-1" width="180" height="180"></canvas>
-    <div class="brightness-row">
-      <span>Bright</span>
-      <input type="range" id="bright-1" min="0" max="100" value="100">
+<div class="lb-body">
+  <div class="lb-left">
+    <div class="zone-select-row" id="zone-select-row">
+      <select id="zone-select">
+        <option value="1">Zone 1 -- Left</option>
+        <option value="2">Zone 2 -- Center</option>
+        <option value="3">Zone 3 -- Right</option>
+        <option value="all">All Zones</option>
+      </select>
+      <span class="info-dot" title="Pick a zone, then use the color wheel to set it. All Zones applies one color everywhere.">i</span>
+    </div>
+
+    <div class="zone-select-row" id="lb-effect-row" hidden>
+      <span class="panel-sub">One effect, one color, for the whole bar:</span>
+    </div>
+    <div class="chip-grid" id="lb-effect-grid" hidden></div>
+
+    <div class="lb-illustration-wrap">
+      <div class="lb-zone-crop"><img class="lb-illustration-img" id="zoneImg1" src="lightbar_bar.png" alt=""></div>
+      <div class="lb-zone-crop"><img class="lb-illustration-img" id="zoneImg2" src="lightbar_bar.png" alt=""></div>
+      <div class="lb-zone-crop"><img class="lb-illustration-img" id="zoneImg3" src="lightbar_bar.png" alt=""></div>
+      <div class="lb-strip-cover"></div>
+      <div class="lb-strip-glow-wide" id="stripGlowWide"></div>
+      <div class="lb-strip-glow-core" id="stripGlowCore"></div>
+    </div>
+
+    <div class="zone-pins" id="zone-pins-row">
+      <button class="zone-pin selected" data-zone="1"><span class="pin-tick"></span><span class="pin-badge">1</span></button>
+      <button class="zone-pin" data-zone="2"><span class="pin-tick"></span><span class="pin-badge">2</span></button>
+      <button class="zone-pin" data-zone="3"><span class="pin-tick"></span><span class="pin-badge">3</span></button>
     </div>
   </div>
 
-  <div class="wheel-card" id="card-2">
-    <div class="wheel-title"><span class="swatch" id="swatch-2"></span>Zone 2 -- Center</div>
-    <canvas class="wheel" id="wheel-2" width="180" height="180"></canvas>
-    <div class="brightness-row">
-      <span>Bright</span>
-      <input type="range" id="bright-2" min="0" max="100" value="100">
+  <div class="lb-right">
+    <h3 class="color-panel-heading">Color</h3>
+    <div class="wheel-row">
+      <canvas class="wheel" id="wheel" width="180" height="180"></canvas>
+      <input type="range" class="vertical-slider" id="value-slider" min="0" max="100" value="100">
     </div>
-  </div>
 
-  <div class="wheel-card" id="card-3">
-    <div class="wheel-title"><span class="swatch" id="swatch-3"></span>Zone 3 -- Right</div>
-    <canvas class="wheel" id="wheel-3" width="180" height="180"></canvas>
-    <div class="brightness-row">
-      <span>Bright</span>
-      <input type="range" id="bright-3" min="0" max="100" value="100">
+    <div class="swatch-row" id="swatch-row">
+      <button class="swatch-btn off-swatch" id="off-swatch" title="Off">&#8709;</button>
+      <button class="swatch-btn add-swatch" id="add-swatch" title="Save current color">+</button>
     </div>
-  </div>
 
-  <div class="wheel-card all-zones" id="card-all">
-    <div class="wheel-title"><span class="swatch" id="swatch-all"></span>All Zones</div>
-    <canvas class="wheel" id="wheel-all" width="180" height="180"></canvas>
-    <div class="brightness-row">
-      <span>Bright</span>
-      <input type="range" id="bright-all" min="0" max="100" value="100">
+    <div class="rgb-inputs">
+      <label class="rgb-field"><span>R</span><input type="number" id="rgb-r" min="0" max="255" value="255"></label>
+      <label class="rgb-field"><span>G</span><input type="number" id="rgb-g" min="0" max="255" value="0"></label>
+      <label class="rgb-field"><span>B</span><input type="number" id="rgb-b" min="0" max="255" value="0"></label>
     </div>
   </div>
 </div>
 
-<div class="off-row">
-  <button id="off-btn" class="btn btn-ghost">Turn Off</button>
-</div>
+<section class="panel lb-section">
+  <div class="panel-header">
+    <h2>Presets</h2>
+  </div>
+  <div id="lb-preset-grid" class="card-grid"></div>
+</section>
+
+<section class="panel lb-section">
+  <div class="panel-header">
+    <h2>Reactive (keyboard -&gt; lightbar)</h2>
+    <label class="switch-label">
+      <input type="checkbox" id="lb-reactive-enabled">
+      <span>Enabled</span>
+    </label>
+  </div>
+  <div class="panel-sub" style="margin-bottom:16px;">
+    Flashes the matching lightbar zone when a key in that keyboard zone is
+    pressed. Zone 4 flashes all three lightbar zones. Uses the static
+    color path -- this won't run at the same time as a Dynamic effect.
+  </div>
+  <div class="reactive-grid">
+    <label class="reactive-field"><span>Background</span><input type="color" id="lb-reactive-bg" value="#000000"></label>
+    <label class="reactive-field"><span>Zone 1 flash</span><input type="color" id="lb-reactive-z1" value="#ff0000"></label>
+    <label class="reactive-field"><span>Zone 2 flash</span><input type="color" id="lb-reactive-z2" value="#00ff00"></label>
+    <label class="reactive-field"><span>Zone 3 flash</span><input type="color" id="lb-reactive-z3" value="#0000ff"></label>
+    <label class="reactive-field"><span>Zone 4 (all) flash</span><input type="color" id="lb-reactive-z4" value="#ffdc00"></label>
+  </div>
+  <div style="margin-top:18px; display:flex; align-items:center; gap:10px;">
+    <button id="lb-reactive-capture" class="btn btn-ghost">Capture current keyboard zones</button>
+    <span class="panel-sub" id="lb-reactive-capture-status"></span>
+  </div>
+</section>
 
 <div id="status-log"></div>
 
+<footer class="actionbar">
+  <button id="lb-save-preset-btn" class="btn btn-accent">Save current as preset</button>
+  <button id="lb-set-default-btn" class="btn btn-ghost">Set as default</button>
+  <span id="lb-toast" class="toast"></span>
+</footer>
+
+<div id="lb-modal-backdrop" class="modal-backdrop" hidden>
+  <div class="modal">
+    <h3>Save preset</h3>
+    <input type="text" id="lb-modal-name" placeholder="e.g. gaming_rgb" autocomplete="off">
+    <div class="modal-actions">
+      <button id="lb-modal-cancel" class="btn btn-ghost">Cancel</button>
+      <button id="lb-modal-confirm" class="btn btn-accent">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
-const BASE = "";  // same origin as this page (daemon's static file server)
+const DEFAULT_SWATCHES = ["#4f7bff", "#b544e8", "#ff3fa4", "#ff5470", "#3ddc84", "#ffffff"];
+const STORAGE_KEY = "jma_studio_lightbar_swatches";
+
+const zoneColors = { 1: [255, 0, 0], 2: [255, 0, 0], 3: [255, 0, 0] };
+let selectedZone = 1; // 1, 2, 3, or "all"
+
+// Firmware-native animated modes (see hardware/lightbar.py's set_mode())
+// -- whole-bar single color only, no per-zone control, unlike Static.
+const LIGHTBAR_MODES = ["breathing", "neon", "rainbow", "wave", "ripple", "scanner", "strobe"];
+let dynamicMode = false;
+let activeLightbarMode = null;
 
 function hsvToRgb(h, s, v) {
   const c = v * s;
@@ -156,15 +463,31 @@ function hsvToRgb(h, s, v) {
   else if (h < 240) { r = 0; g = x; b = c; }
   else if (h < 300) { r = x; g = 0; b = c; }
   else              { r = c; g = 0; b = x; }
-  return [
-    Math.round((r + m) * 255),
-    Math.round((g + m) * 255),
-    Math.round((b + m) * 255),
-  ];
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+function rgbToHsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === r) h = 60 * (((g - b) / d) % 6);
+    else if (max === g) h = 60 * ((b - r) / d + 2);
+    else h = 60 * ((r - g) / d + 4);
+  }
+  if (h < 0) h += 360;
+  const s = max === 0 ? 0 : d / max;
+  return [h, s, max];
 }
 
 function rgbToHex(r, g, b) {
   return "#" + [r, g, b].map(v => v.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToRgb(hex) {
+  hex = hex.replace("#", "");
+  return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
 }
 
 function drawWheel(canvas) {
@@ -174,22 +497,15 @@ function drawWheel(canvas) {
   const img = ctx.createImageData(size, size);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const dx = x - radius;
-      const dy = y - radius;
+      const dx = x - radius, dy = y - radius;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const idx = (y * size + x) * 4;
-      if (dist > radius) {
-        img.data[idx + 3] = 0;
-        continue;
-      }
+      if (dist > radius) { img.data[idx + 3] = 0; continue; }
       let angle = Math.atan2(dy, dx) * 180 / Math.PI;
       if (angle < 0) angle += 360;
       const sat = Math.min(1, dist / radius);
       const [r, g, b] = hsvToRgb(angle, sat, 1);
-      img.data[idx] = r;
-      img.data[idx + 1] = g;
-      img.data[idx + 2] = b;
-      img.data[idx + 3] = 255;
+      img.data[idx] = r; img.data[idx + 1] = g; img.data[idx + 2] = b; img.data[idx + 3] = 255;
     }
   }
   ctx.putImageData(img, 0, 0);
@@ -203,125 +519,511 @@ function setStatus(msg, isError) {
 
 async function post(path, body) {
   try {
-    const res = await fetch(BASE + path, {
+    const res = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
     });
     const data = await res.json();
-    if (!data.ok) {
-      setStatus("Error: " + (data.error || "unknown"), true);
-    } else {
-      setStatus("");
-    }
+    setStatus(data.ok ? "" : "Error: " + (data.error || "unknown"), !data.ok);
     return data;
   } catch (e) {
     setStatus("Request failed: " + e.message, true);
   }
 }
 
-// Throttles the actual network call to at most once per `intervalMs`
-// while allowing a final call right after the last update -- keeps
-// dragging on a wheel responsive-looking (the swatch updates
-// instantly) without flooding the daemon with a request per pixel of
-// mouse movement, since each real commit takes a few hundred ms.
 function throttle(fn, intervalMs) {
-  let lastCall = 0;
-  let pendingArgs = null;
-  let timer = null;
-  function run(args) {
-    lastCall = Date.now();
-    fn(...args);
-  }
+  let lastCall = 0, pendingArgs = null, timer = null;
+  function run(args) { lastCall = Date.now(); fn(...args); }
   return (...args) => {
-    const now = Date.now();
-    const elapsed = now - lastCall;
-    if (elapsed >= intervalMs) {
-      run(args);
-    } else {
+    const elapsed = Date.now() - lastCall;
+    if (elapsed >= intervalMs) { run(args); }
+    else {
       pendingArgs = args;
       if (!timer) {
-        timer = setTimeout(() => {
-          timer = null;
-          if (pendingArgs) run(pendingArgs);
-          pendingArgs = null;
-        }, intervalMs - elapsed);
+        timer = setTimeout(() => { timer = null; if (pendingArgs) run(pendingArgs); pendingArgs = null; }, intervalMs - elapsed);
       }
     }
   };
 }
 
-function setupZone(key, { swatchId, wheelId, brightId, apply }) {
-  const canvas = document.getElementById(wheelId);
-  const swatch = document.getElementById(swatchId);
-  const brightSlider = document.getElementById(brightId);
-  drawWheel(canvas);
+// ---- illustration -----------------------------------------------------
 
-  let currentHue = 0, currentSat = 0;
-  let dragging = false;
+// Baseline hue actually baked into gui/lightbar_bar.png for each zone
+// (sampled directly from the generated image, not assumed 0/120/240 --
+// the AI-rendered reds/greens/blues aren't perfectly pure). Recoloring
+// a zone means rotating ITS baseline hue to the target hue, so this
+// has to match the real asset or every color will land off-hue.
+const ZONE_BASE_HUE = { 1: 354.3, 2: 109.5, 3: 215.4 };
 
-  const sendThrottled = throttle((hex) => apply(hex), 120);
-
-  function updateFromEvent(evt) {
-    const rect = canvas.getBoundingClientRect();
-    const x = evt.clientX - rect.left;
-    const y = evt.clientY - rect.top;
-    const radius = canvas.width / 2;
-    const dx = x - radius;
-    const dy = y - radius;
-    const dist = Math.min(radius, Math.sqrt(dx * dx + dy * dy));
-    let angle = Math.atan2(dy, dx) * 180 / Math.PI;
-    if (angle < 0) angle += 360;
-    currentHue = angle;
-    currentSat = dist / radius;
-    applyCurrent(true);
-  }
-
-  function applyCurrent(fromWheel) {
-    const value = brightSlider.value / 100;
-    const [r, g, b] = hsvToRgb(currentHue, currentSat, value);
-    const hex = rgbToHex(r, g, b);
-    swatch.style.background = hex;
-    sendThrottled(hex);
-  }
-
-  canvas.addEventListener("pointerdown", (e) => {
-    dragging = true;
-    canvas.setPointerCapture(e.pointerId);
-    updateFromEvent(e);
+function updateIllustration() {
+  [1, 2, 3].forEach(zone => {
+    const [r, g, b] = zoneColors[zone];
+    const [h, s, v] = rgbToHsv(r, g, b);
+    const rotate = h - ZONE_BASE_HUE[zone];
+    const img = document.getElementById(`zoneImg${zone}`);
+    img.style.filter = `hue-rotate(${rotate}deg) saturate(${s}) brightness(${Math.max(v, 0.04)})`;
   });
-  canvas.addEventListener("pointermove", (e) => {
-    if (dragging) updateFromEvent(e);
-  });
-  canvas.addEventListener("pointerup", () => { dragging = false; });
-  canvas.addEventListener("pointercancel", () => { dragging = false; });
 
-  brightSlider.addEventListener("input", () => applyCurrent(false));
+  const stripGradient = `linear-gradient(to right, ${rgbToHex(...zoneColors[1])}, ${rgbToHex(...zoneColors[2])}, ${rgbToHex(...zoneColors[3])})`;
+  document.getElementById("stripGlowWide").style.background = stripGradient;
+  document.getElementById("stripGlowCore").style.background = stripGradient;
 }
 
-setupZone("zone1", {
-  swatchId: "swatch-1", wheelId: "wheel-1", brightId: "bright-1",
-  apply: (hex) => post("/lightbar/zone", { zone: 1, hex }),
+function selectZone(zone) {
+  selectedZone = zone;
+  document.getElementById("zone-select").value = String(zone);
+  document.querySelectorAll(".zone-pin").forEach(pin => {
+    pin.classList.toggle("selected", pin.dataset.zone === String(zone));
+  });
+  const [r, g, b] = zone === "all" ? zoneColors[1] : zoneColors[zone];
+  setWheelFromRgb(r, g, b, false);
+}
+
+document.querySelectorAll(".zone-pin").forEach(pin => {
+  pin.addEventListener("click", () => selectZone(Number(pin.dataset.zone)));
 });
-setupZone("zone2", {
-  swatchId: "swatch-2", wheelId: "wheel-2", brightId: "bright-2",
-  apply: (hex) => post("/lightbar/zone", { zone: 2, hex }),
-});
-setupZone("zone3", {
-  swatchId: "swatch-3", wheelId: "wheel-3", brightId: "bright-3",
-  apply: (hex) => post("/lightbar/zone", { zone: 3, hex }),
-});
-setupZone("all", {
-  swatchId: "swatch-all", wheelId: "wheel-all", brightId: "bright-all",
-  apply: (hex) => post("/lightbar/all", { hex }),
+document.getElementById("zone-select").addEventListener("change", (e) => {
+  const v = e.target.value;
+  selectZone(v === "all" ? "all" : Number(v));
 });
 
-document.getElementById("off-btn").addEventListener("click", () => {
-  post("/lightbar/off");
-  ["swatch-1", "swatch-2", "swatch-3", "swatch-all"].forEach(id => {
-    document.getElementById(id).style.background = "#000";
+// ---- static / dynamic mode toggle -----------------------------------------
+
+function renderEffectGrid() {
+  const grid = document.getElementById("lb-effect-grid");
+  grid.innerHTML = "";
+  LIGHTBAR_MODES.forEach(mode => {
+    const chip = document.createElement("button");
+    chip.className = "chip" + (activeLightbarMode === mode ? " active" : "");
+    chip.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+    chip.addEventListener("click", () => {
+      activeLightbarMode = mode;
+      const [r, g, b] = zoneColors[1];
+      post("/lightbar/mode", { mode, hex: rgbToHex(r, g, b) });
+      renderEffectGrid();
+    });
+    grid.appendChild(chip);
   });
+}
+
+// Pure UI state -- shows/hides the right controls and re-renders the chip
+// grid, with NO network call. Used both by the real toggle (setDynamicMode,
+// below) and by applyLightbarPreset(), which already sent the real change
+// via the preset-apply endpoint and just needs the page to reflect it
+// without redundantly (and racily) re-sending a stale color first.
+function setUiMode(isDynamic) {
+  dynamicMode = isDynamic;
+  document.getElementById("mode-static").classList.toggle("active", !isDynamic);
+  document.getElementById("mode-dynamic").classList.toggle("active", isDynamic);
+  document.getElementById("zone-select-row").hidden = isDynamic;
+  document.getElementById("zone-pins-row").hidden = isDynamic;
+  document.getElementById("lb-effect-row").hidden = !isDynamic;
+  document.getElementById("lb-effect-grid").hidden = !isDynamic;
+  if (isDynamic) renderEffectGrid();
+}
+
+function setDynamicMode(isDynamic) {
+  if (isDynamic) {
+    // The wheel becomes "the one color for the effect" in Dynamic mode --
+    // pin it to zoneColors[1] (also what renderEffectGrid()/sendBrightness()
+    // read) so dragging the wheel can't silently write to a different
+    // zone's color than the one actually being sent to the firmware.
+    selectedZone = 1;
+    const [r, g, b] = zoneColors[1];
+    setUiMode(true);
+    setWheelFromRgb(r, g, b, false);
+  } else {
+    setUiMode(false);
+    activeLightbarMode = null;
+    // Restore whatever the static per-zone colors were -- a real static
+    // commit (SetGamingRgbKb) also resets the firmware mode byte back to
+    // 0, which is what actually cancels the animated mode.
+    const [r, g, b] = selectedZone === "all" ? zoneColors[1] : zoneColors[selectedZone];
+    if (selectedZone === "all") {
+      post("/lightbar/all", { hex: rgbToHex(r, g, b) });
+    } else {
+      post("/lightbar/zone", { zone: selectedZone, hex: rgbToHex(r, g, b) });
+    }
+  }
+}
+
+document.getElementById("mode-static").addEventListener("click", () => setDynamicMode(false));
+document.getElementById("mode-dynamic").addEventListener("click", () => setDynamicMode(true));
+
+// ---- wheel + value slider + rgb inputs, all kept in sync ----------------
+
+const wheelCanvas = document.getElementById("wheel");
+const valueSlider = document.getElementById("value-slider");
+const rInput = document.getElementById("rgb-r");
+const gInput = document.getElementById("rgb-g");
+const bInput = document.getElementById("rgb-b");
+drawWheel(wheelCanvas);
+
+let currentHue = 0, currentSat = 1;
+
+const sendZoneColor = throttle((hex) => {
+  if (dynamicMode) {
+    if (activeLightbarMode) post("/lightbar/mode", { mode: activeLightbarMode, hex });
+    return;
+  }
+  if (selectedZone === "all") {
+    post("/lightbar/all", { hex });
+  } else {
+    post("/lightbar/zone", { zone: selectedZone, hex });
+  }
+}, 120);
+
+function applyColor(r, g, b, fromUser = true) {
+  if (selectedZone === "all") {
+    zoneColors[1] = [r, g, b]; zoneColors[2] = [r, g, b]; zoneColors[3] = [r, g, b];
+  } else {
+    zoneColors[selectedZone] = [r, g, b];
+  }
+  updateIllustration();
+  rInput.value = r; gInput.value = g; bInput.value = b;
+  if (fromUser) sendZoneColor(rgbToHex(r, g, b));
+}
+
+function setWheelFromRgb(r, g, b, fromUser = true) {
+  const [h, s, v] = rgbToHsv(r, g, b);
+  currentHue = h; currentSat = s;
+  valueSlider.value = Math.round(v * 100);
+  applyColor(r, g, b, fromUser);
+}
+
+function updateFromWheelPosition(clientX, clientY) {
+  const rect = wheelCanvas.getBoundingClientRect();
+  const radius = wheelCanvas.width / 2;
+  const dx = clientX - rect.left - radius, dy = clientY - rect.top - radius;
+  const dist = Math.min(radius, Math.sqrt(dx * dx + dy * dy));
+  let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+  if (angle < 0) angle += 360;
+  currentHue = angle;
+  currentSat = dist / radius;
+  const value = valueSlider.value / 100;
+  const [r, g, b] = hsvToRgb(currentHue, currentSat, value);
+  applyColor(r, g, b, true);
+}
+
+let dragging = false;
+wheelCanvas.addEventListener("pointerdown", (e) => { dragging = true; wheelCanvas.setPointerCapture(e.pointerId); updateFromWheelPosition(e.clientX, e.clientY); });
+wheelCanvas.addEventListener("pointermove", (e) => { if (dragging) updateFromWheelPosition(e.clientX, e.clientY); });
+wheelCanvas.addEventListener("pointerup", () => { dragging = false; });
+wheelCanvas.addEventListener("pointercancel", () => { dragging = false; });
+
+valueSlider.addEventListener("input", () => {
+  const value = valueSlider.value / 100;
+  const [r, g, b] = hsvToRgb(currentHue, currentSat, value);
+  applyColor(r, g, b, true);
 });
+
+function onRgbInputChange() {
+  const r = Math.max(0, Math.min(255, parseInt(rInput.value) || 0));
+  const g = Math.max(0, Math.min(255, parseInt(gInput.value) || 0));
+  const b = Math.max(0, Math.min(255, parseInt(bInput.value) || 0));
+  setWheelFromRgb(r, g, b, true);
+}
+[rInput, gInput, bInput].forEach(el => el.addEventListener("change", onRgbInputChange));
+
+// ---- swatches -----------------------------------------------------------
+
+function loadSwatches() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    return Array.isArray(stored) ? stored : DEFAULT_SWATCHES;
+  } catch (e) { return DEFAULT_SWATCHES; }
+}
+
+function saveSwatches(list) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch (e) {}
+}
+
+function renderSwatches() {
+  const row = document.getElementById("swatch-row");
+  row.querySelectorAll(".user-swatch").forEach(el => el.remove());
+  const addBtn = document.getElementById("add-swatch");
+  loadSwatches().forEach(hex => {
+    const btn = document.createElement("button");
+    btn.className = "swatch-btn user-swatch";
+    btn.style.background = hex;
+    btn.title = hex;
+    btn.addEventListener("click", () => setWheelFromRgb(...hexToRgb(hex), true));
+    row.insertBefore(btn, addBtn);
+  });
+}
+
+document.getElementById("off-swatch").addEventListener("click", () => {
+  if (dynamicMode) {
+    activeLightbarMode = null;
+    renderEffectGrid();
+  }
+  if (dynamicMode || selectedZone === "all") {
+    post("/lightbar/off");
+    zoneColors[1] = [0, 0, 0]; zoneColors[2] = [0, 0, 0]; zoneColors[3] = [0, 0, 0];
+  } else {
+    zoneColors[selectedZone] = [0, 0, 0];
+    post("/lightbar/zone", { zone: selectedZone, hex: "#000000" });
+  }
+  updateIllustration();
+  rInput.value = 0; gInput.value = 0; bInput.value = 0;
+});
+
+document.getElementById("add-swatch").addEventListener("click", () => {
+  const hex = rgbToHex(parseInt(rInput.value) || 0, parseInt(gInput.value) || 0, parseInt(bInput.value) || 0);
+  const list = loadSwatches();
+  if (!list.includes(hex)) {
+    list.push(hex);
+    saveSwatches(list);
+    renderSwatches();
+  }
+});
+
+// ---- brightness -----------------------------------------------------------
+
+const sendBrightness = throttle((value) => {
+  if (dynamicMode && activeLightbarMode) {
+    const [r, g, b] = zoneColors[1];
+    post("/lightbar/mode", { mode: activeLightbarMode, hex: rgbToHex(r, g, b), brightness: value });
+  } else {
+    post("/lightbar/brightness", { value });
+  }
+}, 150);
+document.getElementById("brightness").addEventListener("input", (e) => {
+  sendBrightness(parseInt(e.target.value));
+});
+
+// ---- presets --------------------------------------------------------------
+
+let lbPresets = {};
+let lbDefaultPreset = null;
+let lbActivePreset = null;
+
+let lbToastTimer = null;
+function lbToast(msg, isError) {
+  const el = document.getElementById("lb-toast");
+  el.textContent = msg;
+  el.classList.toggle("error", !!isError);
+  el.classList.add("show");
+  clearTimeout(lbToastTimer);
+  lbToastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+// Presets saved before Reactive settings were bundled in are a flat
+// {"type": ..., ...} dict with no "lightbar"/"reactive" keys -- treat
+// the whole object as the lightbar part for those older presets.
+function lightbarPart(preset) {
+  return preset.lightbar || preset;
+}
+
+function presetSwatch(preset) {
+  const lb = lightbarPart(preset);
+  if (lb.type === "mode") {
+    const hex = rgbToHex(...lb.color);
+    return `linear-gradient(90deg, ${hex}, ${hex})`;
+  }
+  const colors = lb.colors || {};
+  const hexes = [1, 2, 3].map(z => colors[String(z)] ? rgbToHex(...colors[String(z)]) : "#333");
+  return `linear-gradient(90deg, ${hexes.join(", ")})`;
+}
+
+function renderLightbarPresets() {
+  const grid = document.getElementById("lb-preset-grid");
+  grid.innerHTML = "";
+  const names = Object.keys(lbPresets).sort();
+  if (names.length === 0) {
+    grid.innerHTML = `<div class="panel-sub">No presets saved yet.</div>`;
+    return;
+  }
+  for (const name of names) {
+    const preset = lbPresets[name];
+    const lb = lightbarPart(preset);
+    const reactiveOn = !!(preset.reactive && preset.reactive.enabled);
+    const card = document.createElement("div");
+    card.className = "preset-card" + (lbActivePreset === name ? " active" : "");
+    card.innerHTML = `
+      <div style="position:absolute;inset:0;background:${presetSwatch(preset)};opacity:0.18;"></div>
+      <button class="preset-delete" data-name="${name}">&times;</button>
+      <div class="preset-card-name">${name}</div>
+      <div class="preset-card-effect">${lb.type === "mode" ? lb.mode : `brightness ${lb.brightness ?? 100}`}</div>
+      <div class="preset-card-badges">
+        ${lbDefaultPreset === name ? '<span class="badge default">default</span>' : ""}
+        ${reactiveOn ? '<span class="badge">reactive</span>' : ""}
+      </div>`;
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".preset-delete")) return;
+      applyLightbarPreset(name);
+    });
+    card.querySelector(".preset-delete").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete preset "${name}"?`)) return;
+      if (lbActivePreset === name) lbActivePreset = null;
+      await del(`/lightbar/presets/${encodeURIComponent(name)}`);
+      await loadLightbarPresets();
+    });
+    grid.appendChild(card);
+  }
+}
+
+async function del(path) {
+  const res = await fetch(path.startsWith("http") ? path : path, { method: "DELETE" });
+  return res.json();
+}
+
+async function loadLightbarPresets() {
+  lbPresets = await (await fetch("/lightbar/presets")).json();
+  const d = await (await fetch("/lightbar/default")).json();
+  lbDefaultPreset = d.default_preset;
+  renderLightbarPresets();
+}
+
+async function applyLightbarPreset(name) {
+  const res = await post(`/lightbar/presets/${encodeURIComponent(name)}/apply`);
+  if (!res || !res.ok) { lbToast((res && res.error) || "failed to apply preset", true); return; }
+  lbActivePreset = name;
+  const preset = lbPresets[name];
+  const lb = lightbarPart(preset);
+
+  if (lb.type === "mode") {
+    zoneColors[1] = lb.color;
+    activeLightbarMode = lb.mode;
+    selectedZone = 1;
+    setUiMode(true);
+    if (typeof lb.brightness === "number") {
+      document.getElementById("brightness").value = lb.brightness;
+    }
+    setWheelFromRgb(...lb.color, false);
+  } else {
+    activeLightbarMode = null;
+    setUiMode(false);
+    const colors = lb.colors || {};
+    [1, 2, 3].forEach(z => {
+      if (colors[String(z)]) zoneColors[z] = colors[String(z)];
+    });
+    if (typeof lb.brightness === "number") {
+      document.getElementById("brightness").value = lb.brightness;
+    }
+    updateIllustration();
+    const [r, g, b] = selectedZone === "all" ? zoneColors[1] : zoneColors[selectedZone];
+    setWheelFromRgb(r, g, b, false);
+  }
+
+  // Reactive settings were applied server-side too (if this preset has
+  // any) -- refresh the panel from the server rather than duplicating
+  // that logic here, so it can't drift out of sync with what actually
+  // got written.
+  if (preset.reactive) {
+    await loadReactiveConfig();
+  }
+
+  renderLightbarPresets();
+  lbToast(`Applied "${name}"`);
+}
+
+document.getElementById("lb-save-preset-btn").addEventListener("click", () => {
+  document.getElementById("lb-modal-name").value = "";
+  document.getElementById("lb-modal-backdrop").hidden = false;
+  document.getElementById("lb-modal-name").focus();
+});
+document.getElementById("lb-modal-cancel").addEventListener("click", () => {
+  document.getElementById("lb-modal-backdrop").hidden = true;
+});
+document.getElementById("lb-modal-backdrop").addEventListener("click", (e) => {
+  if (e.target.id === "lb-modal-backdrop") document.getElementById("lb-modal-backdrop").hidden = true;
+});
+document.getElementById("lb-modal-confirm").addEventListener("click", async () => {
+  const name = document.getElementById("lb-modal-name").value.trim();
+  if (!name) return;
+  await post("/lightbar/presets/save", { name });
+  document.getElementById("lb-modal-backdrop").hidden = true;
+  lbActivePreset = name;
+  await loadLightbarPresets();
+  lbToast(`Saved "${name}"`);
+});
+document.getElementById("lb-modal-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("lb-modal-confirm").click();
+});
+
+document.getElementById("lb-set-default-btn").addEventListener("click", async () => {
+  if (!lbActivePreset) {
+    lbToast("Apply or save a preset first", true);
+    return;
+  }
+  const res = await post("/lightbar/default", { name: lbActivePreset });
+  if (!res.ok) { lbToast(res.error || "failed", true); return; }
+  lbDefaultPreset = lbActivePreset;
+  renderLightbarPresets();
+  lbToast(`"${lbActivePreset}" is now the default`);
+});
+
+// ---- reactive (keyboard -> lightbar) ---------------------------------------
+
+const reactiveInputs = {
+  bg: document.getElementById("lb-reactive-bg"),
+  z1: document.getElementById("lb-reactive-z1"),
+  z2: document.getElementById("lb-reactive-z2"),
+  z3: document.getElementById("lb-reactive-z3"),
+  z4: document.getElementById("lb-reactive-z4"),
+};
+const reactiveEnabled = document.getElementById("lb-reactive-enabled");
+
+function readReactiveConfig() {
+  return {
+    enabled: reactiveEnabled.checked,
+    background_color: hexToRgb(reactiveInputs.bg.value),
+    zone_flash_colors: {
+      "1": hexToRgb(reactiveInputs.z1.value),
+      "2": hexToRgb(reactiveInputs.z2.value),
+      "3": hexToRgb(reactiveInputs.z3.value),
+    },
+    all_flash_color: hexToRgb(reactiveInputs.z4.value),
+  };
+}
+
+const saveReactiveConfig = throttle(async () => {
+  await post("/lightbar/reactive", readReactiveConfig());
+}, 150);
+
+async function loadReactiveConfig() {
+  const res = await fetch("/lightbar/reactive");
+  const config = await res.json();
+  reactiveEnabled.checked = !!config.enabled;
+  reactiveInputs.bg.value = rgbToHex(...(config.background_color || [0, 0, 0]));
+  const zc = config.zone_flash_colors || {};
+  reactiveInputs.z1.value = rgbToHex(...(zc["1"] || [255, 0, 0]));
+  reactiveInputs.z2.value = rgbToHex(...(zc["2"] || [0, 255, 0]));
+  reactiveInputs.z3.value = rgbToHex(...(zc["3"] || [0, 0, 255]));
+  reactiveInputs.z4.value = rgbToHex(...(config.all_flash_color || [255, 220, 0]));
+  const status = document.getElementById("lb-reactive-capture-status");
+  status.textContent = (config.zone_boundaries && config.zone_boundaries.length)
+    ? `Zones captured (${config.zone_boundaries.length + 1} zones).`
+    : "No keyboard zones captured yet -- click Capture first.";
+}
+
+reactiveEnabled.addEventListener("change", saveReactiveConfig);
+[reactiveInputs.bg, reactiveInputs.z1, reactiveInputs.z2, reactiveInputs.z3, reactiveInputs.z4].forEach(el => {
+  el.addEventListener("input", saveReactiveConfig);
+});
+
+document.getElementById("lb-reactive-capture").addEventListener("click", async () => {
+  const res = await post("/lightbar/reactive/capture_zones");
+  const status = document.getElementById("lb-reactive-capture-status");
+  if (!res || !res.ok) {
+    status.textContent = (res && res.error) || "capture failed";
+    lbToast((res && res.error) || "capture failed", true);
+    return;
+  }
+  status.textContent = `Zones captured (${res.num_zones} zones).`;
+  lbToast("Captured current keyboard zones");
+});
+
+// ---- init -----------------------------------------------------------------
+
+renderSwatches();
+updateIllustration();
+setWheelFromRgb(255, 0, 0, false);
+loadLightbarPresets();
+loadReactiveConfig();
 </script>
 
 </body>
