@@ -1,3 +1,6 @@
+using JmaStudio.Effects;
+using JmaStudio.Hardware;
+
 namespace JmaStudio.Presets;
 
 /// <summary>Thin atomic-read/write wrapper around one JSON file, typed
@@ -31,6 +34,23 @@ public sealed class PresetStore
     public JsonStore<LightbarReactiveConfig> LightbarReactiveConfig { get; }
     public JsonStore<AppConfig> AppConfig { get; }
 
+    /// <summary>The controller-reactive effect's own live settings --
+    /// deliberately separate from KeyboardPresets, matching the Python
+    /// side's controller_reactive.json being its own file, not a regular
+    /// preset (see daemon/server.py on `main`). Added in Phase 5 even
+    /// though this file/project was built in Phase 4.</summary>
+    public JsonStore<ControllerReactiveParams> ControllerReactiveSettings { get; }
+
+    /// <summary>Last-commanded keyboard/lightbar state, persisted on every
+    /// change and reloaded at service startup -- settled decision #9:
+    /// the Python daemon's in-memory-only state resets to defaults on
+    /// every restart, which is fine for an AtLogOn-triggered process but
+    /// NOT for a real boot-time Windows Service (dark keyboard/lightbar
+    /// before login otherwise). Null means "never set yet, use the
+    /// built-in default" -- distinct from any real saved state.</summary>
+    public JsonStore<KeyboardPreset?> LiveKeyboardState { get; }
+    public JsonStore<LightbarState?> LiveLightbarState { get; }
+
     public PresetStore(string directory)
     {
         KeyboardPresets = new JsonStore<Dictionary<string, KeyboardPreset>>(
@@ -41,5 +61,11 @@ public sealed class PresetStore
             Path.Combine(directory, "lightbar-reactive-config.json"), () => new());
         AppConfig = new JsonStore<AppConfig>(
             Path.Combine(directory, "app-config.json"), () => new());
+        ControllerReactiveSettings = new JsonStore<ControllerReactiveParams>(
+            Path.Combine(directory, "controller-reactive-settings.json"), () => new());
+        LiveKeyboardState = new JsonStore<KeyboardPreset?>(
+            Path.Combine(directory, "live-keyboard-state.json"), () => null);
+        LiveLightbarState = new JsonStore<LightbarState?>(
+            Path.Combine(directory, "live-lightbar-state.json"), () => null);
     }
 }

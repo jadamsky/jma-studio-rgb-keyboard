@@ -94,6 +94,7 @@ public static class PythonPresetMigrator
         "rain" => ParseRain(p),
         "gradient" => ParseGradient(p),
         "typing_reactive" => ParseTypingReactive(p),
+        "controller_reactive" => ParseControllerReactive(p),
         _ => throw new NotSupportedException($"Unknown Python effect name '{effectName}' encountered during migration."),
     };
 
@@ -266,6 +267,34 @@ public static class PythonPresetMigrator
         };
     }
 
+    private static StickColors ParseStickColors(JsonElement el) => new()
+    {
+        Idle = ParseColorOr(el, "idle", new RgbColor(0, 100, 0)),
+        Tier1 = ParseColorOr(el, "tier1", new RgbColor(0, 100, 0)),
+        Tier2 = ParseColorOr(el, "tier2", new RgbColor(0, 100, 0)),
+    };
+
+    private static ControllerReactiveParams ParseControllerReactive(JsonElement p) => new()
+    {
+        BackgroundEnabled = ParseBoolOr(p, "background_enabled", true),
+        BackgroundColor = ParseColorOr(p, "background_color", new RgbColor(10, 10, 10)),
+        LeftStick = p.TryGetProperty("left_stick", out JsonElement ls) ? ParseStickColors(ls) : new StickColors(),
+        RightStick = p.TryGetProperty("right_stick", out JsonElement rs) ? ParseStickColors(rs) : new StickColors(),
+        ButtonColors = ParseStringColorDictOr(p, "button_colors"),
+        Deadzone = ParseDoubleOr(p, "deadzone", 0.15),
+    };
+
+    /// <summary>Migrates controller_reactive.json -- unlike presets.json's
+    /// entries, this file IS the params object directly (its own separate
+    /// settings store on the Python side, deliberately not a regular
+    /// preset -- see daemon/server.py on `main`).</summary>
+    public static ControllerReactiveParams MigrateControllerReactiveSettings(string path)
+    {
+        if (!File.Exists(path)) return new ControllerReactiveParams();
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+        return ParseControllerReactive(doc.RootElement);
+    }
+
     // ---- top-level migrations (one per Python JSON file) --------------
 
     /// <summary>Migrates presets.json's {"name": {"effect":..., "params":...}}
@@ -388,5 +417,6 @@ public static class PythonPresetMigrator
         store.LightbarPresets.Save(MigrateLightbarPresets(Path.Combine(pythonRepoRoot, "lightbar_presets.json")));
         store.LightbarReactiveConfig.Save(MigrateLightbarReactiveConfig(Path.Combine(pythonRepoRoot, "lightbar_reactive.json")));
         store.AppConfig.Save(MigrateAppConfig(Path.Combine(pythonRepoRoot, "config.json")));
+        store.ControllerReactiveSettings.Save(MigrateControllerReactiveSettings(Path.Combine(pythonRepoRoot, "controller_reactive.json")));
     }
 }

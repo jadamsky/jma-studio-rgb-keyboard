@@ -27,14 +27,14 @@ re-litigate those; they're final unless the user reopens them.
 
 ## Current status
 
-**Phases 1-4 (branch/scaffold + hardware protocol + effects + presets)
-— DONE.** Real hardware control confirmed live for both keyboard and
-lightbar, all 21 real Python effects ported and confirmed rendering
-correctly, and the real on-disk preset/config data migrated into a new
-atomic-write C# store with keyboard AND lightbar presets both
-re-applied live from the migrated data. Not yet started: controller-
-reactive support, service, GUI, installer (see below and "Suggested
-phasing").
+**Phases 1-5 (branch/scaffold + hardware protocol + effects + presets +
+service/controller-reactive) — DONE.** Real hardware control confirmed
+live for keyboard, lightbar, AND controller. The whole thing now runs
+as a real ASP.NET Core service process (console-testable today, real
+OS service registration deferred to Phase 7) fronting an HTTP API,
+with controller-reactive's full enable/disable/settings lifecycle
+verified end to end against the user's real DualSense and real saved
+colors. Not yet started: WPF GUI, installer (see "Suggested phasing").
 
 Phase progress (updated as each completes — see "Suggested phasing"
 below for the full list):
@@ -51,15 +51,11 @@ below for the full list):
       "Phase 3: effects" below)
 - [x] Preset persistence (atomic writes) + migration of real on-disk
       data — see "Phase 4: presets" below
-- [ ] Controller-reactive support (`hardware/controller.py` +
-      `effects/controller_reactive.py`) — see placement decision below.
-      **Resolved 2026-09-09: build this in Phase 5**, not folded into
-      Phase 4 (the user picked this explicitly when asked) — including
-      its settings-file (`controller_reactive.json`) migration, which
-      moves with it to Phase 5 rather than the now-completed Phase 4,
-      since migrating settings for a feature that doesn't exist in C#
-      yet wouldn't have been useful.
-- [ ] Windows Service wrapper
+- [x] Controller-reactive support (`Controller.cs`, the reactive
+      effect, enable/disable + settings) — see "Phase 5" below
+- [x] Windows Service wrapper (as an ASP.NET Core app, console-run so
+      far — real OS service registration is Phase 7's job) — see
+      "Phase 5" below
 - [ ] WPF GUI
 - [ ] Installer
 
@@ -607,12 +603,165 @@ closing out the one remaining untested `Lightbar` code path
 keyboard presets) were migrated but not individually re-applied live --
 low risk, since they exercise the same `puke`/`typing_reactive`/
 `gradient` code paths already proven via other presets and Phase 3's
-group demo, but not literally clicked through one by one. Also not
-tested: the lightbar reactive config and app-config migration are
-structurally verified (correct field values land in the new JSON files)
-but not exercised through any live "apply the default preset at
-startup" or "reactive flash on keypress" behavior, since neither of
-those behaviors has a Windows Service to run inside of yet (Phase 5).
+group demo, but not literally clicked through one by one.
+
+**Update from Phase 5**: the "apply the default preset at startup"
+behavior mentioned as untested above IS now verified -- see "Phase 5"
+below (`GET /status` showed the real "Red Chase" default applied on
+the service's very first boot, before any live state had ever been
+persisted). The lightbar reactive config's "flash on keypress" loop is
+still not built at all (not just untested) -- see Phase 5's "NOT
+built" list.
+
+## Phase 5: Windows Service + controller-reactive — DONE (2026-09-09)
+
+New `JmaStudio.Service` project: an ASP.NET Core minimal-API app that
+owns the keyboard/lightbar/controller connections and the 30fps render
+loop, replacing `daemon/server.py`'s role. Confirmed running end to end
+against real hardware, including a from-cold-boot test that correctly
+applied the user's real migrated default preset with no live state on
+disk yet.
+
+**Architecture**:
+- **Hosting**: `Microsoft.Extensions.Hosting.WindowsServices`'
+  `UseWindowsService()` -- the same binary runs as a real Windows
+  Service when launched by the Service Control Manager, or as a plain
+  console app otherwise (that's how this was tested all through this
+  phase; actual OS service *registration* -- `sc.exe create`/similar --
+  is Phase 7's job, not built here). Binds to `http://127.0.0.1:8420`
+  explicitly (same port and loopback-only convention `daemon/server.py`
+  used) rather than ASP.NET's default dev-cert ports.
+- **`DaemonState`**: the C# analogue of Python's `_current_effect`/
+  `_current_params` module globals, but with an explicit `lock`
+  (settled decision: no GIL to lean on) and disk persistence on every
+  `SetEffect()` call (settled decision #9) via a new `LiveKeyboardState`
+  `JsonStore` in `JmaStudio.Presets`. On first-ever boot (no live state
+  file yet), falls back to `AppConfig.DefaultPreset` looked up in the
+  migrated `KeyboardPresets` -- confirmed live: a fresh service start
+  applied "Red Chase" correctly, not a black screen.
+- **`LightbarController`**: wraps `Lightbar` so every mutating call
+  (`SetZone`/`SetAll`/`SetMode`/`SetBrightness`/`Off`/`ApplyState`) also
+  persists `GetState()` to a `LiveLightbarState` `JsonStore`, and a
+  `RestorePersistedState()` called once at startup re-applies it. Kept
+  as a wrapper rather than adding persistence into `Lightbar` itself,
+  so `JmaStudio.Hardware` stays protocol-only (no persistence
+  awareness), matching its existing scope.
+- **`RenderLoopService`** (a `BackgroundService`): the ~30fps loop,
+  injecting live `KeyState` (from `InputListener`) and `ControllerState`
+  (from `Controller.GetState()`) into `EffectContext` each frame, same
+  shape as `daemon/server.py`'s `_render_loop()`. Skips the actual HID
+  write when the frame didn't change (via `DaemonState.RecordFrame`'s
+  bool return), same optimization Python has.
+- **`InputListener`** + `GlobalKeyboardHook`/`WindowsKeyMap`: the C#
+  analogue of `daemon/input_listener.py`. The hook/keymap classes are
+  the same implementation already proven in `JmaStudio.HardwareTest`
+  during Phase 3/4 interactive testing (see `effect-live`), copied
+  (not shared via project reference) into `JmaStudio.Service` as the
+  real, permanent version -- narrow-scope by design, same principle as
+  the Python original: only ever produces a key name on keydown,
+  nothing persisted.
+- **`Controller.cs`** (new, in `JmaStudio.Hardware`): port of
+  `hardware/controller.py`, including the sleep/wake auto-reconnect fix
+  from `main`'s own HANDOFF.md (detects a >2s gap in the ~1000Hz report
+  stream and reopens the HID handle) -- reproduced from the start here
+  rather than waiting to hit the same bug again.
+- **`ControllerReactiveEffect`** (new, in `JmaStudio.Effects`): port of
+  `effects/controller_reactive.py`, reading `EffectContext.ControllerState`
+  the same way `TypingReactiveEffect` reads `KeyState`.
+  `ControllerReactiveParams`/`StickColors` added to `EffectParams.cs`
+  with the same `[JsonDerivedType]` polymorphism as every other effect.
+- **`ControllerReactiveManager`** (new, in `JmaStudio.Service`): the
+  "full override" enable/disable stash-and-restore logic (Python's
+  `_pre_controller_reactive_state`), deliberately kept out of
+  `JmaStudio.Effects` per the earlier placement decision. **Known gap,
+  documented in the file's own header comment**: because `DaemonState`
+  now persists whatever effect is live to disk on every change (a real
+  C# addition, settled decision #9, that Python doesn't have), a
+  service restart while controller-reactive is enabled boots directly
+  back into controller-reactive rather than restoring the pre-enable
+  effect -- the stash is in-memory only. This is a genuinely new edge
+  case, not a regression, and wasn't fixed now; whoever revisits it
+  should read that comment first.
+- **`AcerLightingServiceManager`**: stops `AcerLightingService` and
+  sets its startup type to `Disabled` via `Win32_Service.ChangeStartMode`
+  (WMI, `System.Management`) -- called unconditionally at every service
+  startup, matching settled decision #10's "cheap insurance" requirement
+  (same spirit as `start_all.ps1`'s own retry loop on the Python side).
+  Confirmed running without error on real hardware every startup this
+  session; a fresh from-scratch verification that it actually prevents
+  PredatorSense from regaining control was NOT repeated here (already
+  established once on the Python side, and this C# code path calls the
+  same underlying Win32 service, not a new mechanism).
+- **HTTP API**: modernized per settled decision #7 -- real status codes
+  (`404`, `422`, `503`, `400`) and JSON error bodies instead of Python's
+  always-`200` `{"ok":...,"error":...}` convention. Route paths mostly
+  mirror `daemon/server.py`'s own (`/status`, `/effect`, `/presets`,
+  `/lightbar/*`) since there's no reason to churn those; the newer
+  controller-reactive group uses kebab-case (`/controller-reactive/*`)
+  since it has no existing Python path convention to match. **Real gap,
+  not silently dropped**: `ConfigureHttpJsonOptions` needed the exact
+  same `IncludeFields`/`JsonStringEnumConverter` settings
+  `PresetJsonOptions.Default` already has, or ASP.NET Core's own default
+  JSON options apply instead -- hit this live (bolt directions came back
+  as empty `{}` objects, enums as raw ints) and fixed it before it
+  shipped further.
+
+**Verified on real hardware, this session** (after stopping the Python
+daemon first, to avoid the exact two-processes-fighting-over-the-
+keyboard problem hit and fixed earlier in this same session):
+- Cold service start: `AcerLightingService` handled, keyboard/lightbar/
+  controller all initialized, `GET /status` showed the real migrated
+  "Red Chase" default preset applied with zero live state on disk --
+  the whole boot-fallback chain (`AppConfig` → `KeyboardPresets` →
+  `DaemonState`) confirmed working, not just unit-testable.
+  `GET /effects` listed all 22 registered effects (21 + controller_reactive).
+- `POST /effect` (switch to `rainbow`): user confirmed live.
+- `POST /presets/ZONES/apply` (the multi-zone gradient preset, via the
+  real HTTP API this time, not the `HardwareTest` console tool): user
+  confirmed live.
+- `POST /lightbar/all` (solid green, all 3 zones): user confirmed live
+  (also noted the middle zone reads very slightly dimmer than the
+  outer two -- a hardware/diffuser characteristic, not a software bug,
+  since the identical RGB value is sent to all 3 zones in one call).
+- Controller-reactive full lifecycle: `POST /controller-reactive/enable`
+  took over the keyboard; user confirmed the DualSense drove it live
+  (initially with default dark-green colors, since the settings file
+  hadn't been migrated yet -- caught this, extended
+  `PythonPresetMigrator`/`PresetStore` to cover
+  `controller_reactive.json`, re-migrated, restarted the service,
+  re-enabled to force a refresh, and the user then confirmed the REAL
+  saved colors -- background off, custom per-button colors -- rendering
+  correctly); `POST /controller-reactive/disable` correctly restored
+  whatever had been stashed (the stash content was itself an artifact
+  of the restart-timing during this test, not a bug in the restore
+  mechanism -- see the file's own header comment).
+- Ended the session by applying "Red Chase" and "Rainbow" (the user's
+  real keyboard/lightbar defaults) via the real API, at the user's
+  request, leaving the C# service as the one actually driving the
+  user's hardware afterward (the Python daemon was stopped for this
+  whole testing session and, as of this writing, has not been
+  restarted -- see "Immediate live state" if this file gains that
+  section again before the next session).
+
+**NOT built in Phase 5** (explicitly out of scope for this pass, not
+forgotten):
+- The lightbar's keypress-driven reactive flash loop (Python's
+  `_lightbar_reactive_loop` / `/lightbar/reactive` config apply) --
+  `LightbarReactiveConfig` migration exists (Phase 4) but nothing
+  reads/acts on it yet.
+- `/keypress` (the GUI's focus-independent forwarded-keystroke path,
+  needed because a focused WebView2 page swallows real OS keystrokes
+  before the global hook sees them -- see `daemon/input_listener.py`'s
+  `register_named_press()` docstring on `main` for why this exists).
+  Deferred until the WPF GUI (Phase 6) exists to actually need it --
+  WPF doesn't necessarily have the same WebView2-swallows-keystrokes
+  problem, so this should be re-evaluated then, not assumed necessary.
+- Real OS Windows Service *registration* (`sc.exe create` or
+  equivalent) -- explicitly Phase 7's job per the original phasing.
+- A dedicated `/controller-reactive/button-groups` /
+  `/controller-reactive/defaults` introspection endpoint (Python has
+  these for its GUI to build the color-picker grid dynamically) -- not
+  needed until Phase 6 has a GUI that needs them.
 
 ## Key technical decisions for the scaffold itself
 
@@ -669,13 +818,27 @@ those behaviors has a Windows Service to run inside of yet (Phase 5).
   from an elevated terminal, or see the elevation-wrapper-script note
   under "How this was actually verified" above if scripting it from a
   non-elevated automation context).
-- Solution currently has 4 projects: `JmaStudio.Hardware` (protocol —
-  `Keyboard.cs`, `Lightbar.cs`, `LightbarDiagnostics.cs`),
-  `JmaStudio.Effects` (all 21 effects + `IEffect`/`EffectRegistry`),
-  `JmaStudio.Presets` (atomic store + Python migration), and
+- Solution currently has 5 projects: `JmaStudio.Hardware` (protocol —
+  `Keyboard.cs`, `Lightbar.cs`, `Controller.cs`, `LightbarDiagnostics.cs`),
+  `JmaStudio.Effects` (all 22 effects + `IEffect`/`EffectRegistry`),
+  `JmaStudio.Presets` (atomic store + Python migration),
+  `JmaStudio.Service` (the ASP.NET Core daemon/service), and
   `JmaStudio.HardwareTest` (the console app). No tests project yet —
-  "testing" so far means the console app against real hardware, by
-  design (see Phase 2/3/4's stated purpose).
+  "testing" so far means the console app / real HTTP calls against real
+  hardware, by design (see Phase 2/3/4/5's stated purpose).
+- **Run the actual service** (from `windows/`):
+  `dotnet run --project src/JmaStudio.Service` — runs as a plain console
+  app (Ctrl+C to stop) since no OS service registration exists yet
+  (Phase 7). **Requires Administrator** (stops/disables
+  `AcerLightingService` and drives the lightbar). Binds to
+  `http://127.0.0.1:8420` — **stop the Python daemon first** if it's
+  running (same two-processes-fighting-over-the-keyboard problem noted
+  below applies to the real service too, not just `effect-live`).
+  Defaults to `windows/data/` and the repo-root `keymap.json`; override
+  with the `JMASTUDIO_DATA_DIR`/`JMASTUDIO_KEYMAP_PATH` environment
+  variables. See "Phase 5" above for the full endpoint list
+  (`/status`, `/effect`, `/presets*`, `/lightbar/*`,
+  `/controller-reactive/*`).
 - Effect commands (from `windows/`, no elevation needed):
   `dotnet run --project src/JmaStudio.HardwareTest -- effects-list`,
   `... -- effect-demo <name> [seconds] [--synthetic-key idx]`,
@@ -723,8 +886,38 @@ those behaviors has a Windows Service to run inside of yet (Phase 5).
    disable logic and `controller_reactive.json` migration in the
    service itself) — the user explicitly chose to build this here
    rather than in Phase 4, since it depends on the enable/disable
-   plumbing this phase provides
+   plumbing this phase provides — **DONE**, see "Phase 5" above
 6. WPF GUI: replicate existing UX, add Create Preset + dominance-
    reassert button
 7. Installer (location prompt, consent notice, service registration,
    GUI autostart, preset data migration)
+
+## Immediate live state as of writing this (2026-09-09, end of Phase 5 session)
+
+- **The C# `JmaStudio.Service` is the process actually driving the
+  user's real hardware right now** -- running as a plain elevated
+  console process (`dotnet run --project src/JmaStudio.Service`, not an
+  installed OS service), started via an elevated wrapper script, PID
+  not worth recording here since it'll be gone by the next session
+  either way (find it via `Get-NetTCPConnection -LocalPort 8420`).
+- **The Python daemon is stopped** and has NOT been restarted since
+  partway through Phase 5 (stopped deliberately to avoid the two-
+  processes-fighting-over-hardware problem this session hit once
+  already). Its tray icon and any GUI window may or may not still be
+  open -- check before assuming either way, and never blindly kill
+  python.exe processes (see `main`'s own HANDOFF.md for why).
+- Current confirmed-good live state: keyboard on `typing_reactive`
+  ("Red Chase"), lightbar on the `Rainbow` animated mode -- both the
+  user's real configured defaults, deliberately restored to this state
+  at the end of the session per the user's own request.
+- `windows/data/*.json` holds real migrated user data, including (as of
+  this session) real controller-reactive settings pulled from
+  `controller_reactive.json` for the first time.
+- Nothing from this Phase 5 session has been committed to git yet as
+  of this writing -- `git status` on `csharp-port` will show the new
+  `JmaStudio.Service` project plus modifications to `JmaStudio.Effects`/
+  `JmaStudio.Hardware`/`JmaStudio.Presets` for controller-reactive
+  support.
+- If picking this up fresh: decide whether to restart the Python daemon
+  (giving the user their pre-this-session setup back exactly) or keep
+  testing against the C# service -- don't assume either way, ask.

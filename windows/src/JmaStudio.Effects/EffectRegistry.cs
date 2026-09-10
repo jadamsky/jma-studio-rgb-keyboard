@@ -49,6 +49,7 @@ public sealed class EffectRegistry
             new RainEffect(positions),
             new GradientEffect(positions, indexByName),
             new TypingReactiveEffect(positions),
+            new ControllerReactiveEffect(indexByName),
         };
 
         _byName = effects.ToDictionary(e => e.Name);

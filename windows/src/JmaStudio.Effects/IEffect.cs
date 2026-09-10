@@ -13,6 +13,11 @@ public sealed class EffectContext
     public IReadOnlyDictionary<int, IReadOnlyList<double>> KeyState { get; init; } =
         new Dictionary<int, IReadOnlyList<double>>();
 
+    /// <summary>Live DualSense state, injected the same way KeyState is --
+    /// null when no controller is connected. Only ControllerReactiveEffect
+    /// reads this today.</summary>
+    public ControllerState? ControllerState { get; init; }
+
     /// <summary>Needed only by effects that delegate to another effect by
     /// name (currently just TypingReactive's base_effect) -- the Python
     /// side does this with importlib.import_module + a name lookup;

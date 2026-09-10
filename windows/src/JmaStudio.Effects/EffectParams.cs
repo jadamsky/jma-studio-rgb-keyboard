@@ -46,6 +46,7 @@ namespace JmaStudio.Effects;
 [JsonDerivedType(typeof(RainParams), "rain")]
 [JsonDerivedType(typeof(GradientParams), "gradient")]
 [JsonDerivedType(typeof(TypingReactiveParams), "typing_reactive")]
+[JsonDerivedType(typeof(ControllerReactiveParams), "controller_reactive")]
 public abstract record EffectParams;
 
 public sealed record StaticParams : EffectParams
@@ -235,4 +236,23 @@ public sealed record TypingReactiveParams : EffectParams
     public BoltStyle BoltStyle { get; init; } = BoltStyle.Solid;
     public double BoltFlickerSpeed { get; init; } = 6.0;
     public bool BoltReset { get; init; } = false;
+}
+
+/// <summary>Port of effects/controller_reactive.py's params. "dark green"
+/// == (0,100,0), matching the Python DEFAULT_GROUP_COLOR.</summary>
+public sealed record StickColors
+{
+    public RgbColor Idle { get; init; } = new(0, 100, 0);
+    public RgbColor Tier1 { get; init; } = new(0, 100, 0);
+    public RgbColor Tier2 { get; init; } = new(0, 100, 0);
+}
+
+public sealed record ControllerReactiveParams : EffectParams
+{
+    public bool BackgroundEnabled { get; init; } = true;
+    public RgbColor BackgroundColor { get; init; } = new(10, 10, 10);
+    public StickColors LeftStick { get; init; } = new();
+    public StickColors RightStick { get; init; } = new();
+    public IReadOnlyDictionary<string, RgbColor> ButtonColors { get; init; } = new Dictionary<string, RgbColor>();
+    public double Deadzone { get; init; } = 0.15;
 }

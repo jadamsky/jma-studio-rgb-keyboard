@@ -1,0 +1,11 @@
+{
+  "Mode": "Rainbow",
+  "ModeColor": {
+    "R": 255,
+    "G": 0,
+    "B": 0
+  },
+  "ModeSpeed": 5,
+  "ZoneColors": null,
+  "Brightness": 100
+}
