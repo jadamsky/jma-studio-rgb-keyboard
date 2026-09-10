@@ -27,16 +27,24 @@ re-litigate those; they're final unless the user reopens them.
 
 ## Current status
 
-**Phases 1-5 — DONE. Phase 6 (WPF GUI) — IN PROGRESS, first slice
-working but with known performance/polish issues, see below.** Real
+**Phases 1-5 — DONE. Phase 6 (WPF GUI) — IN PROGRESS**, further along
+than the first-slice snapshot below: the responsiveness complaint is
+fixed and verified better by the user, the keyboard preview now matches
+the Python GUI's real key layout/stagger/labels, and three real bugs
+found via live testing tonight are fixed (two GUI-side, one now has
+permanent server-side logging so a fourth won't be a mystery). **Read
+"Phase 6 continued" (below the original "Phase 6" section) before doing
+any more GUI work — it documents all of tonight's fixes and, critically,
+lists 4 uncommitted files this repo currently has on disk.** Real
 hardware control confirmed live for keyboard, lightbar, AND controller.
 The whole thing runs as a real ASP.NET Core service process (console-
 testable today, real OS service registration deferred to Phase 7)
-fronting an HTTP API. A first-slice WPF `MainWindow` now talks to that
-API and shows a live keyboard preview, but the user's own live testing
-found it noticeably slower/choppier than the Python GUI and visually
-rougher — not yet fixed, see "Phase 6" below for specifics and
-hypotheses. Not yet started: installer (see "Suggested phasing").
+fronting an HTTP API. Not yet started: installer (see "Suggested
+phasing"). **As of the end of tonight's session, the C# stack is fully
+stopped and the Python stack is running instead** — see "Immediate live
+state" at the very end of this file, which has been fully rewritten for
+tonight's end state; don't rely on the older Phase 5/6 "immediate live
+state" language above it, only the final section is current.
 
 Phase progress (updated as each completes — see "Suggested phasing"
 below for the full list):
@@ -913,6 +921,168 @@ this first slice small enough to actually verify end-to-end):
   emergency buttons with UAC shields + install-detection gating, plus
   the broader dashboard proposal) — none of it is built, only planned.
 
+## Phase 6 continued: performance fix + visual overhaul + 3 bugs found live (2026-09-10, second session)
+
+Picked back up the same day, focused entirely on the two unfixed issues
+from the section above (performance, visual polish) plus whatever live
+testing surfaced. All of it was verified against the user's real
+hardware and real GUI clicks/keypresses, same verification bar as every
+other phase in this file.
+
+**1. Responsiveness fix — user-confirmed better.** Root-caused to
+exactly hypotheses #1 and #2 from the section above, both fixed at once
+in `MainWindow.xaml.cs`:
+- Replaced the single 150ms `_pollTimer` with two independent
+  `DispatcherTimer`s: `_framePollTimer` at 33ms (matching
+  `RenderLoopService`'s real 30fps render rate) calling a new
+  `PollFrameAsync()`, and `_statusPollTimer` at 750ms calling a new
+  `PollStatusAsync()` — status (current effect name, connection dot,
+  frame counters) doesn't need anywhere near frame-rate polling.
+- The two are no longer awaited sequentially — they're on separate
+  timers entirely now, not just parallelized within one tick, which
+  also directly addresses hypothesis #3 (the full `/status` payload,
+  including potentially-large `EffectParams`, is now fetched ~14x less
+  often than before).
+- Added `_frameInFlight`/`_statusInFlight` guards so a slow tick can't
+  stack up overlapping HTTP requests against the service.
+- **User-confirmed**: "much better" after this fix, before the visual
+  work below even started.
+
+**2. Visual overhaul of the keyboard preview — user-confirmed "much
+nicer."** The old canvas drew every cell as a uniform 20x20 black
+square with a 3px gap and no labels — nothing like the Python GUI's
+real keyboard shape. Fixed by porting `gui/app.js`'s layout tables
+directly:
+- New file `KeyboardKeyStyle.cs`: `KeyWidth`/`KeyHeight` dictionaries
+  (wide keys like space/shift/enter, the function row's narrower 0.85u,
+  num_enter's 2-row height) and `FriendlyLabel()`, transcribed verbatim
+  from `gui/app.js`'s `KEY_WIDTH`/`KEY_HEIGHT`/`FRIENDLY_LABEL`/
+  `friendlyLabel()`.
+- `BuildKeyboardCanvas()` (`MainWindow.xaml.cs`) rewritten: each cell is
+  now a `Border` (5px corner radius, subtle white border, dark base
+  fill) with a centered `TextBlock` label, sized per-key from the new
+  tables instead of a uniform square, and the whole board scales its
+  per-key pixel `unit` to fit the panel's actual width (clamped 16-34px)
+  the same way `buildKeyboardGrid()` does in `gui/app.js`, instead of a
+  fixed size. `PreviewBoardHost_SizeChanged` (new, wired in
+  `MainWindow.xaml`) rebuilds the grid on window resize so it keeps
+  fitting. `_cellRectangles` (a `Rectangle` dict) was renamed
+  `_cellBorders` (a `Border` dict) throughout, including in
+  `PollFrameAsync` where live colors are painted.
+- Still NOT done (user, after seeing this): "still some UI stuff that
+  could be touched up... let's deal with that when things are more
+  complete" — explicitly deferred, not forgotten. Likely candidates for
+  a future pass: overall window chrome/panel colors don't match
+  `gui/style.css`'s `--bg`/`--panel` palette closely (close but not
+  exact), preset cards and quick-effect chips don't have the CSS
+  reference's hover/active states or accent gradient, no toast
+  animation. Nothing broken, just not pixel-matched.
+
+**3. Bug found live: "custom_keys" Quick Effect = all-off keyboard.**
+User reported the keyboard going fully dark after tabbing away from the
+GUI. Investigation via `GET /status` showed `currentEffect: "custom_keys"`
+with `Colors: {}` and `DefaultColor: {R:0,G:0,B:0}` — i.e. exactly what
+you'd expect from clicking a "custom_keys" quick-effect button, since
+that effect's bare `DefaultParams` is an empty per-key color map with a
+black fallback. **This was never a hardware/timing bug** — the C# GUI's
+Quick Effects panel was listing every single registered effect
+(including diagnostic-only and blank-canvas-by-default ones) with zero
+filtering, unlike the Python GUI, which has always hidden exactly this
+set from its own chip grid (`gui/app.js`'s `HIDDEN_FROM_CHIPS`). Fixed
+in `MainWindow.xaml.cs` with a matching `HiddenFromQuickEffects` set:
+`probe`, `mask`, `gradient`, `typing_reactive`, `static`, `custom_keys`
+(same 6 as Python) **plus `controller_reactive`** (a C#-only addition,
+excluded because it has its own enable/disable lifecycle via
+`ControllerReactiveManager` and must never be poked via a raw one-click
+`/effect` apply that bypasses that stash/restore logic).
+
+**4. Bug found live: WPF access-key hazard turned a bare keypress into
+a silent effect switch.** After fix #3, the user reported the keyboard
+switching from "Red Chase" to a rainbow-cycling effect "after only a
+couple seconds" while testing — with no click. Since there was **no
+request logging anywhere in the Service** at the time, this was
+undiagnosable from evidence, so request logging was added first (see
+#5) before it could be confirmed. The very next occurrence, the user
+reported it happened "when I pressed c" while randomly mashing keys
+(not clicking). Root cause: `MainWindow.xaml`'s Quick Effects
+`DataTemplate` bound `Button.Content="{Binding}"` directly to the raw
+effect name string. WPF's default `Button` template sets
+`ContentPresenter.RecognizesAccessKey = true`, which means a literal
+`_` character in bound `Content` text is parsed as an access-key
+(mnemonic) marker — the character right after it becomes a hidden
+Alt+key shortcut for that button, with the underscore itself hidden
+from display. Effect names are snake_case (`spectrum_cycle`,
+`color_wipe`, ...), so **every single quick-effect button silently
+registered an Alt+key shortcut nobody asked for**, using whatever
+letter happened to follow an underscore in its name. Once Alt was
+pressed anywhere (even incidentally, e.g. testing the `left_alt` key
+while typing), WPF's `AccessKeyManager` entered its classic Win32
+"access-key mode," where a **subsequent bare letter keypress alone**
+(no Alt held) fires the matching mnemonic — exactly matching "pressed
+c" with no visible modifier. Confirmed the exact trigger via the new
+request log: `POST /effects/spectrum_cycle/apply-default` fired at the
+moment the user pressed `c`. **Fixed**: added an `EffectChip(string
+Name, string DisplayName)` record; `DisplayName` replaces every `_`
+with a space before binding to `Content` (also just reads better —
+"spectrum cycle" instead of "spectrum_cycle"), while `Name` (the real,
+raw effect id, no underscores stripped) stays bound to `Tag` for the
+click handler's existing `Tag: string name` pattern match, so the API
+calls are unaffected. **This class of bug can recur anywhere a raw
+snake_case name gets bound straight to a WPF `Button`/`MenuItem`/
+`Label`'s `Content` or `Header`** — worth grepping for
+`Content="{Binding` / `Header="{Binding` against any future
+raw-identifier-string binding, not just effect names (preset names are
+user-chosen and typically don't contain underscores, but nothing stops
+a user from naming a preset with one).
+
+**5. Added permanent request logging to `JmaStudio.Service`.** There
+was no logging of incoming HTTP requests at all before tonight, which
+made bug #4 briefly undiagnosable from evidence (had to wait for a
+second live occurrence after adding logging). Added a minimal
+`app.Use(...)` middleware in `Program.cs`, right after `app.Build()`
+and before the `Endpoints.Map*` calls, logging `{Method} {Path}` via
+`ILogger<Program>` for every request (not bodies, to keep it cheap on
+the 30fps-adjacent `/frame` polling path). This is a permanent addition,
+not a temporary debug hack — kept because it's exactly what made bug #4
+solvable instead of a repeat guessing game. Requires a service restart
+to pick up (done tonight via the elevated restart flow — see "How this
+was actually verified" above for the general elevation-wrapper pattern
+this reused).
+
+**Verified working, end to end, tonight**: split-timer responsiveness
+(user: "much better"), the new keyboard grid layout (user: "much
+nicer"), both GUI bugs fixed and reproduced-then-resolved live via
+actual clicks/keypresses against real hardware, request logging
+confirmed capturing the exact triggering request for bug #4.
+
+**Uncommitted as of end of session — 4 files, listed here so nothing
+gets lost or double-guessed tomorrow**:
+- `windows/src/JmaStudio.Gui/MainWindow.xaml` (modified — `Canvas`
+  height no longer fixed, `PreviewBoardHost` named +
+  `SizeChanged` wired, Quick Effects button binds `DisplayName`/`Name`
+  instead of the raw string twice)
+- `windows/src/JmaStudio.Gui/MainWindow.xaml.cs` (modified — split
+  timers, `Border`-based keyboard grid, `HiddenFromQuickEffects`,
+  `EffectChip`)
+- `windows/src/JmaStudio.Gui/KeyboardKeyStyle.cs` (new — key
+  width/height/label tables)
+- `windows/src/JmaStudio.Service/Program.cs` (modified — request
+  logging middleware)
+- `windows/data/live-keyboard-state.json` is ALSO showing as modified
+  in `git status` — this is just real-time disk persistence from
+  tonight's testing (settled decision #9: every `SetEffect()` call
+  writes through to disk), not something anyone edited by hand. Expect
+  this file to keep churning normally as testing continues; it's real
+  user hardware state, tracked in git same as the other `windows/data/`
+  files, not something to "clean up."
+- **None of this was committed tonight** — the user asked to update
+  this handoff and get to a clean stopping point, not to commit
+  (per this project's standing rule: only commit when explicitly
+  asked). Nothing is at risk by leaving it uncommitted — it's sitting
+  on disk on the `csharp-port` branch same as any in-progress work — but
+  don't assume it's committed either; check `git status` before
+  building on top of it or before reporting phase completion.
+
 ## Key technical decisions for the scaffold itself
 
 - **Target framework: `net8.0-windows`** across every project in the
@@ -1048,46 +1218,61 @@ this first slice small enough to actually verify end-to-end):
 7. Installer (location prompt, consent notice, service registration,
    GUI autostart, preset data migration)
 
-## Immediate live state as of writing this (2026-09-10, end of Phase 6 session)
+## Immediate live state as of writing this (2026-09-10, end of second Phase 6 session)
 
-- **The C# `JmaStudio.Service` is the process actually driving the
-  user's real hardware right now** -- running as a plain elevated
-  console process (`dotnet run --project src/JmaStudio.Service`, not an
-  installed OS service), started via an elevated wrapper script. PID
-  not worth recording (find it via
-  `Get-NetTCPConnection -LocalPort 8420`).
-- **`JmaStudio.Gui` (the new WPF app) is ALSO currently running**,
-  connected to that Service, showing the live keyboard preview. Find
-  it via `Get-Process -Name JmaStudio.Gui`. It's the first-slice build
-  described in "Phase 6" above -- functional for passive viewing,
-  interactive buttons unverified, known perf/polish issues unfixed.
-- **The Python daemon is stopped** and has not been restarted since
-  Phase 5 (stopped deliberately to avoid the two-processes-fighting-
-  over-hardware problem this session hit once already, on the keyboard
-  side specifically, but the same risk applies to the Service too).
-  Its tray icon and any GUI window may or may not still be open --
-  check before assuming either way, and never blindly kill python.exe
-  processes (see `main`'s own HANDOFF.md for why).
-- Current confirmed-good live state: keyboard on `typing_reactive`
-  ("Red Chase") -- the user's real configured default. Lightbar state
-  wasn't explicitly re-checked at the very end of this session; verify
-  it before assuming it's still on `Rainbow`.
-- `windows/data/*.json` holds real migrated user data, unchanged since
-  Phase 5's end.
-- **This session's work (the whole `JmaStudio.Gui` project, the two
-  JSON bugs, the new `/layout`/`/effects/{name}/apply-default`
-  endpoints, this HANDOFF.md update) is being committed at the end of
-  this session**, per the user's own request -- check `git log` on
-  `csharp-port` to confirm that actually happened rather than assuming
-  it from this note alone (this file could theoretically be read
-  before that commit lands).
-- **Start here next time, in this order**: (1) read the "Phase 6"
-  section above in full before writing any GUI code, (2) decide how to
-  actually investigate the performance complaint (profile first, don't
-  guess-and-check blindly -- the three hypotheses listed are a starting
-  point, not a confirmed diagnosis), (3) only then consider visual
-  polish or the remaining windows/panels, since a prettier UI that's
-  still laggy doesn't address the user's main complaint.
-- If picking this up fresh and unsure whether to keep testing against
-  the C# stack or fall back to the Python daemon: don't assume either
-  way, ask.
+**This section supersedes every "immediate live state" note above it in
+this file — only trust this one.**
+
+- **The C# stack is fully stopped.** Both `JmaStudio.Service` (was PID
+  23700, the elevated console process bound to port 8420) and
+  `JmaStudio.Gui` were confirmed killed at the end of this session.
+  `Get-NetTCPConnection -LocalPort 8420` and
+  `Get-Process -Name JmaStudio.Service,JmaStudio.Gui` should both come
+  back empty if picking this up fresh — if either shows something
+  running, that's new since this note was written, not a leftover from
+  tonight.
+- **The Python stack is running and is the one actually driving the
+  user's real hardware right now**, restarted deliberately at the end
+  of this session per the user's explicit request ("reinstitute the
+  Python even for auto start if it was ever stopped"), via
+  `start_all.ps1` (repo root, `main`-branch script — self-elevates,
+  stops `AcerLightingService`, starts `daemon/server.py` via uvicorn on
+  the same port 8420 the C# service uses, starts `tray.py` if not
+  already running). Confirmed live: `GET http://127.0.0.1:8420/status`
+  returned `hardware_connected/lightbar_connected/controller_connected:
+  true` and `current_effect: "typing_reactive"` with the real "Red
+  Chase" `base_params` — the daemon loaded its own real default preset
+  correctly on this restart, not a blank/fallback state.
+- **The "JMA Studio Autostart" Scheduled Task (Python's autostart
+  mechanism) was checked, not just assumed** — `Get-ScheduledTask`
+  showed `State: Ready` (i.e. enabled, never disabled) and
+  `Get-ScheduledTaskInfo` showed a successful last run
+  (`LastTaskResult: 0`) from earlier the same day. **Nothing needed
+  fixing here** — the task itself was never touched/broken by any C#
+  work this project has done; it just hadn't re-fired yet because the
+  machine hasn't rebooted or the user hasn't logged off/on again since.
+  No action taken beyond confirming this.
+- **`AcerLightingService` is Stopped** (verified via `Get-Service`) —
+  expected and correct, since `start_all.ps1` stops it every run the
+  same way the C# service's own startup does (settled decision #10
+  applies to both stacks identically, they're not fighting over
+  different assumptions here).
+- **4 files are uncommitted on `csharp-port`** — see the full list at
+  the end of the "Phase 6 continued" section directly above this one.
+  Deliberately left uncommitted (user didn't ask for a commit tonight,
+  only to reach a clean stopping point) — check `git status` before
+  assuming either way.
+- **Start here next time, in this order**: (1) read "Phase 6 continued"
+  in full — it has tonight's fixes and the exact uncommitted-file list,
+  (2) decide with the user whether to commit tonight's fixes before
+  building further on top of them, (3) decide with the user whether to
+  switch back to testing the C# stack (stopped) or keep using the
+  Python stack (currently running) — **don't assume either way, ask** —
+  switching back means running `windows/src/JmaStudio.Service` and
+  `JmaStudio.Gui` again per "How to build / run / test" above, and
+  should probably start with stopping the Python daemon first (same
+  two-processes-fighting-over-hardware risk noted elsewhere in this
+  file), (4) only after that, continue with remaining Phase 6 work
+  (visual touch-ups the user explicitly deferred, the Lightbar/
+  Controller Reactive/Diagnostics windows, the tuning panels) or move
+  on to Phase 7 (installer).

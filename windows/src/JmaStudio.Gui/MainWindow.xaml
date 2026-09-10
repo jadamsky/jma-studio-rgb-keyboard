@@ -76,8 +76,8 @@
                             <TextBlock Text="Live Preview" Style="{StaticResource PanelHeader}"/>
                             <TextBlock x:Name="CurrentEffectLabel" Text="--" Foreground="{StaticResource SubTextBrush}" HorizontalAlignment="Right"/>
                         </DockPanel>
-                        <Border Background="#101013" CornerRadius="6" Padding="10">
-                            <Canvas x:Name="KeyboardCanvas" Height="220"/>
+                        <Border x:Name="PreviewBoardHost" Background="#101013" CornerRadius="6" Padding="10" SizeChanged="PreviewBoardHost_SizeChanged">
+                            <Canvas x:Name="KeyboardCanvas" HorizontalAlignment="Center"/>
                         </Border>
                     </StackPanel>
                 </Border>
@@ -117,7 +117,7 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Button Content="{Binding}" Style="{StaticResource BtnGhost}" Margin="0,0,8,8" Padding="12,8" Click="QuickEffect_Click" Tag="{Binding}"/>
+                                    <Button Content="{Binding DisplayName}" Style="{StaticResource BtnGhost}" Margin="0,0,8,8" Padding="12,8" Click="QuickEffect_Click" Tag="{Binding Name}"/>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

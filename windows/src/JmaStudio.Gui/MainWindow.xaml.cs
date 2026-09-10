@@ -9,7 +9,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Shapes;
 using System.Windows.Threading;
 
 namespace JmaStudio.Gui;
@@ -17,23 +16,54 @@ namespace JmaStudio.Gui;
 public partial class MainWindow : Window
 {
     private readonly ApiClient _api = new();
-    private readonly Dictionary<int, Rectangle> _cellRectangles = new();
-    private readonly DispatcherTimer _pollTimer;
+    private readonly Dictionary<int, Border> _cellBorders = new();
+    // Two independent timers, not one shared 150ms tick: the render loop
+    // (RenderLoopService) writes a new frame ~30fps (every ~33ms), so a
+    // single slower poll was the main reason the GUI looked laggy/behind
+    // real keystrokes -- it physically could not show more than ~6-7fps.
+    // Status (current effect name, connection dot, frame counters) only
+    // changes when the user picks a new effect/preset, so it's polled far
+    // less often and, critically, on its OWN timer -- previously it was
+    // awaited sequentially before the frame fetch every single tick,
+    // doubling the round-trip latency in front of every color update.
+    private readonly DispatcherTimer _framePollTimer;
+    private readonly DispatcherTimer _statusPollTimer;
+    private bool _frameInFlight;
+    private bool _statusInFlight;
     private LayoutResponse? _layout;
     private string? _activePresetName;
+
+    // Same exclusion set as gui/app.js's HIDDEN_FROM_CHIPS: these effects
+    // are either diagnostic-only (probe/mask), meaningless with their
+    // bare defaults (custom_keys defaults to an empty color map + black
+    // fallback -- clicking it "applies" an all-off keyboard, which is
+    // exactly the "keyboard went dark" bug this fixes; static/gradient
+    // are just a flat/blank color with nothing configured), or need
+    // dedicated tuning UI not yet built (typing_reactive, gradient).
+    // controller_reactive is a C#-only addition (not in Python's set)
+    // excluded for the same reason: it has its own enable/disable
+    // lifecycle (ControllerReactiveManager) and must not be poked via a
+    // raw one-click /effect apply that bypasses that stash/restore logic.
+    private static readonly HashSet<string> HiddenFromQuickEffects = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "probe", "mask", "gradient", "typing_reactive", "static", "custom_keys", "controller_reactive",
+    };
 
     public MainWindow()
     {
         InitializeComponent();
-        _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-        _pollTimer.Tick += async (_, _) => await PollAsync();
+        _framePollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        _framePollTimer.Tick += async (_, _) => await PollFrameAsync();
+        _statusPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
+        _statusPollTimer.Tick += async (_, _) => await PollStatusAsync();
         Loaded += MainWindow_Loaded;
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         await InitializeAsync();
-        _pollTimer.Start();
+        _framePollTimer.Start();
+        _statusPollTimer.Start();
     }
 
     private async Task InitializeAsync()
@@ -44,10 +74,14 @@ public partial class MainWindow : Window
             BuildKeyboardCanvas();
 
             string[] effects = await _api.GetEffectsAsync();
-            EffectsList.ItemsSource = effects;
+            EffectsList.ItemsSource = effects
+                .Where(name => !HiddenFromQuickEffects.Contains(name))
+                .Select(name => new EffectChip(name, name.Replace('_', ' ')))
+                .ToArray();
 
             await RefreshPresetsAsync();
-            await PollAsync();
+            await PollStatusAsync();
+            await PollFrameAsync();
         }
         catch (Exception ex)
         {
@@ -55,39 +89,102 @@ public partial class MainWindow : Window
         }
     }
 
+    private static readonly SolidColorBrush KeyBaseBrush = new(Color.FromRgb(0x1C, 0x1C, 0x26));
+    private static readonly SolidColorBrush KeyBorderBrush = new(Color.FromArgb(20, 255, 255, 255));
+    private static readonly SolidColorBrush KeyLabelBrush = new(Color.FromArgb(140, 255, 255, 255));
+
+    // Ported from gui/app.js's buildKeyboardGrid(): scales the whole
+    // board to fit the panel's available width (clamped to a sane
+    // per-key pixel range) rather than a fixed px-per-unit, and gives
+    // each key its real width/height/label instead of a uniform square
+    // -- the "layout sucks" feedback was about exactly this gap versus
+    // the Python reference.
     private void BuildKeyboardCanvas()
     {
         if (_layout is null || _layout.Cells.Length == 0) return;
         KeyboardCanvas.Children.Clear();
-        _cellRectangles.Clear();
+        _cellBorders.Clear();
 
         double maxCol = _layout.Cells.Max(c => c.Col);
         double maxRow = _layout.Cells.Max(c => c.Row);
-        const double cellSize = 20;
-        const double gap = 3;
+        double totalCols = maxCol + 3;
+        double totalRows = maxRow + 1.4;
 
-        KeyboardCanvas.Width = (maxCol + 1.5) * (cellSize + gap);
-        KeyboardCanvas.Height = (maxRow + 1) * (cellSize + gap);
+        double availableWidth = PreviewBoardHost.ActualWidth - 40;
+        if (availableWidth <= 0) availableWidth = 900;
+        double unit = Math.Max(16, Math.Min(34, availableWidth / totalCols));
+
+        KeyboardCanvas.Width = totalCols * unit;
+        KeyboardCanvas.Height = totalRows * unit;
 
         foreach (LayoutCell cell in _layout.Cells)
         {
-            var rect = new Rectangle
+            double widthUnits = KeyboardKeyStyle.KeyWidth.GetValueOrDefault(cell.Name, 1);
+            double heightUnits = KeyboardKeyStyle.KeyHeight.GetValueOrDefault(cell.Name, 1);
+            var border = new Border
             {
-                Width = cellSize,
-                Height = cellSize,
-                RadiusX = 3,
-                RadiusY = 3,
-                Fill = Brushes.Black,
+                Width = Math.Max(1, widthUnits * unit - 4),
+                Height = Math.Max(1, heightUnits * unit - 4),
+                CornerRadius = new CornerRadius(5),
+                Background = KeyBaseBrush,
+                BorderBrush = KeyBorderBrush,
+                BorderThickness = new Thickness(1),
+                Child = new TextBlock
+                {
+                    Text = KeyboardKeyStyle.FriendlyLabel(cell.Name),
+                    Foreground = KeyLabelBrush,
+                    FontSize = Math.Max(7, Math.Min(11, unit * 0.28)),
+                    FontWeight = FontWeights.Medium,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                },
             };
-            Canvas.SetLeft(rect, cell.Col * (cellSize + gap));
-            Canvas.SetTop(rect, cell.Row * (cellSize + gap));
-            KeyboardCanvas.Children.Add(rect);
-            _cellRectangles[cell.Index] = rect;
+            Canvas.SetLeft(border, cell.Col * unit);
+            Canvas.SetTop(border, cell.Row * unit);
+            KeyboardCanvas.Children.Add(border);
+            _cellBorders[cell.Index] = border;
         }
     }
 
-    private async Task PollAsync()
+    private void PreviewBoardHost_SizeChanged(object sender, SizeChangedEventArgs e) => BuildKeyboardCanvas();
+
+    private async Task PollFrameAsync()
     {
+        // Guard against overlapping calls: if the service is briefly slow
+        // and a request is still in flight when the next 33ms tick fires,
+        // skip this tick rather than piling up concurrent HTTP requests.
+        if (_frameInFlight) return;
+        _frameInFlight = true;
+        try
+        {
+            FrameResponse? frame = await _api.GetFrameAsync();
+            if (frame is not null)
+            {
+                for (int i = 0; i < frame.Colors.Length; i++)
+                {
+                    if (_cellBorders.TryGetValue(i, out Border? cellBorder))
+                    {
+                        var c = frame.Colors[i];
+                        cellBorder.Background = new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B));
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ReportUnreachable(ex);
+        }
+        finally
+        {
+            _frameInFlight = false;
+        }
+    }
+
+    private async Task PollStatusAsync()
+    {
+        if (_statusInFlight) return;
+        _statusInFlight = true;
         try
         {
             StatusResponse? status = await _api.GetStatusAsync();
@@ -97,27 +194,23 @@ public partial class MainWindow : Window
                 HwStatusDot.Fill = status.KeyboardConnected ? Brushes.LimeGreen : Brushes.OrangeRed;
                 HwStatusLabel.Text = status.KeyboardConnected ? "connected" : "no keyboard";
             }
-
-            FrameResponse? frame = await _api.GetFrameAsync();
-            if (frame is not null)
-            {
-                for (int i = 0; i < frame.Colors.Length; i++)
-                {
-                    if (_cellRectangles.TryGetValue(i, out Rectangle? rect))
-                    {
-                        var c = frame.Colors[i];
-                        rect.Fill = new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B));
-                    }
-                }
-            }
         }
         catch (Exception ex)
         {
-            HwStatusDot.Fill = Brushes.OrangeRed;
-            HwStatusLabel.Text = "service unreachable";
-            System.Diagnostics.Debug.WriteLine($"[PollAsync] {ex}");
-            ToastText.Text = $"{ex.GetType().Name}: {ex.Message}" + (ex.InnerException is { } inner ? $" -> {inner.GetType().Name}: {inner.Message}" : "");
+            ReportUnreachable(ex);
         }
+        finally
+        {
+            _statusInFlight = false;
+        }
+    }
+
+    private void ReportUnreachable(Exception ex)
+    {
+        HwStatusDot.Fill = Brushes.OrangeRed;
+        HwStatusLabel.Text = "service unreachable";
+        System.Diagnostics.Debug.WriteLine($"[Poll] {ex}");
+        ToastText.Text = $"{ex.GetType().Name}: {ex.Message}" + (ex.InnerException is { } inner ? $" -> {inner.GetType().Name}: {inner.Message}" : "");
     }
 
     private async Task RefreshPresetsAsync()
@@ -213,3 +306,14 @@ public partial class MainWindow : Window
 }
 
 public sealed record PresetRow(string Name);
+
+// DisplayName has underscores replaced with spaces -- WPF's Button.Content
+// treats a literal "_" as an access-key (mnemonic) marker, turning the
+// character after it into a hidden Alt+key shortcut. Effect names are
+// snake_case (e.g. "spectrum_cycle"), so binding them to Content directly
+// silently wired every quick-effect button to a keyboard shortcut nobody
+// asked for -- confirmed live: once Alt was pressed at any point (even
+// incidentally, browsing the window), a bare "C" keypress fired
+// "spectrum_cycle"'s apply-default endpoint with no click at all. Name
+// (the real, raw effect id) stays bound to Tag for the API calls.
+public sealed record EffectChip(string Name, string DisplayName);

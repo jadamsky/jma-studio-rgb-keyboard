@@ -109,6 +109,19 @@ builder.Services.AddSingleton<IHostedService>(sp => new RenderLoopService(
 
 var app = builder.Build();
 
+// Minimal request log -- added after a live incident where the keyboard
+// effect changed (Red Chase -> spectrum_cycle) with no way to tell
+// whether a client actually called the API or something in-process did
+// it. There was no logging of any kind for incoming requests before
+// this, making that undiagnosable after the fact. Logs method+path only
+// (not bodies) to keep this cheap on the 30fps-adjacent hot path.
+app.Use(async (context, next) =>
+{
+    var reqLogger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+    reqLogger.LogInformation("{Method} {Path}", context.Request.Method, context.Request.Path);
+    await next();
+});
+
 Endpoints.MapKeyboard(app, daemonState, effectRegistry, presetStore, keyboard, controller);
 Endpoints.MapLightbar(app, lightbarController, presetStore);
 Endpoints.MapControllerReactive(app, controllerReactiveManager, presetStore);
