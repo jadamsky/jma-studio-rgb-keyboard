@@ -1,7 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -10,12 +9,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\JmaStudio.Hardware\JmaStudio.Hardware.csproj" />
-    <ProjectReference Include="..\JmaStudio.Effects\JmaStudio.Effects.csproj" />
-    <ProjectReference Include="..\JmaStudio.Presets\JmaStudio.Presets.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

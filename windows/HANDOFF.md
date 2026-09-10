@@ -27,12 +27,14 @@ re-litigate those; they're final unless the user reopens them.
 
 ## Current status
 
-**Phases 1-2 (branch/scaffold + hardware protocol) — DONE.** Real
-hardware control confirmed live from a bare console app for both
-subsystems. This is the highest-risk part of the whole port and it's
-now solid — see "Verified vs. unverified" below for exactly what was
-tested and how. Not yet started: effects, presets, service, GUI,
-installer (phases 3-7).
+**Phases 1-4 (branch/scaffold + hardware protocol + effects + presets)
+— DONE.** Real hardware control confirmed live for both keyboard and
+lightbar, all 21 real Python effects ported and confirmed rendering
+correctly, and the real on-disk preset/config data migrated into a new
+atomic-write C# store with keyboard AND lightbar presets both
+re-applied live from the migrated data. Not yet started: controller-
+reactive support, service, GUI, installer (see below and "Suggested
+phasing").
 
 Phase progress (updated as each completes — see "Suggested phasing"
 below for the full list):
@@ -45,20 +47,56 @@ below for the full list):
 - [x] HID keyboard port + empirical hardware verification — both the
       static-color command sequence AND the full 512-byte per-key
       frame buffer confirmed on real hardware
-- [ ] Effects ported behind `IEffect`
-- [ ] Preset persistence (atomic writes) + migration of real on-disk data
+- [x] Effects ported behind `IEffect` — all 21, confirmed live (see
+      "Phase 3: effects" below)
+- [x] Preset persistence (atomic writes) + migration of real on-disk
+      data — see "Phase 4: presets" below
+- [ ] Controller-reactive support (`hardware/controller.py` +
+      `effects/controller_reactive.py`) — see placement decision below.
+      **Resolved 2026-09-09: build this in Phase 5**, not folded into
+      Phase 4 (the user picked this explicitly when asked) — including
+      its settings-file (`controller_reactive.json`) migration, which
+      moves with it to Phase 5 rather than the now-completed Phase 4,
+      since migrating settings for a feature that doesn't exist in C#
+      yet wouldn't have been useful.
 - [ ] Windows Service wrapper
 - [ ] WPF GUI
 - [ ] Installer
 
-**Not yet tested even though the byte values are known-correct from
-the Python side**: `Lightbar.SetMode()` (the 7 firmware-native animated
-modes) hasn't been independently exercised on the C# side yet — only
-the static per-zone path (`SetZone`/`SetAll`/`Commit`) has been proven
-live. `SetMode` reuses the same confirmed-working `CallArray`/WMI
-plumbing and known-correct byte layout, so it's a low-risk gap, but
-"low-risk" isn't "verified" — test it before relying on it in Phase 3's
-effects work.
+**Scope reversal, 2026-09-09**: an earlier version of this document
+marked `effects/controller_reactive.py` + `hardware/controller.py` (the
+PS5 DualSense-driven keyboard effect) out of scope, since the original
+port request was "keyboard per-key RGB + rear lightbar." **The user
+has since explicitly reversed this — the full controller-reactive
+feature set, including its presets, is now in scope**, with placement
+left to Claude's judgment. Decided placement, to avoid re-deriving this
+later:
+- `Controller.cs` (raw DualSense USB HID reading, port of
+  `hardware/controller.py`) → **`JmaStudio.Hardware`**, alongside
+  `Keyboard.cs`/`Lightbar.cs` — it's the same kind of thing, a third
+  hardware protocol class, not fundamentally different in shape.
+- The reactive effect itself (port of `effects/controller_reactive.py`)
+  → **`JmaStudio.Effects`**, as one more `IEffect`. Needs one addition
+  to the shared `EffectContext`: a nullable `ControllerState` field,
+  the same pattern `KeyState` already uses for `typing_reactive` — a
+  plain per-frame snapshot the render loop injects, not something the
+  effect reaches out and fetches itself.
+- The "full override" enable/disable semantics and its own separate
+  settings store (`controller_reactive.json`, deliberately NOT part of
+  the regular preset system on the Python side — see `daemon/server.py`
+  on `main`'s `_pre_controller_reactive_state` stash-and-restore logic)
+  → belongs in the future **Windows Service** (Phase 5), not in
+  `JmaStudio.Effects` itself, since that's exactly where the equivalent
+  logic lives in the Python daemon (`daemon/server.py`, not `effects/`).
+- **When to build it: Phase 5, confirmed** (see above) — build
+  `Controller.cs` + the effect alongside the enable/disable plumbing it
+  depends on, not earlier.
+
+**Resolved 2026-09-09**: `Lightbar.SetMode()` (the 7 firmware-native
+animated modes) is now confirmed on real hardware too — the migrated
+"Rainbow" lightbar preset (a `mode` preset) was applied live via
+`Lightbar.ApplyState()` and confirmed by the user to show the real
+firmware rainbow animation. No remaining untested `Lightbar` code path.
 
 ## Settled decisions (do not re-ask about these)
 
@@ -375,10 +413,9 @@ retry.
   `SetBrightness()` — straightforward code, not independently
   hardware-tested yet, but built from the same confirmed-working
   primitives (`Commit()`, `SendRgbKb()`) as `SetZone()`/`SetAll()`.
-- Everything about the keyboard's `NUM_CELLS`/cell-index-to-physical-key
-  mapping (`effects/layout.py`/`keymap.json` on `main`) — not
-  reimplemented in C# yet at all; the frame test used an arbitrary
-  half-and-half split, not the real per-key layout.
+- ~~Everything about the keyboard's `NUM_CELLS`/cell-index-to-physical-key
+  mapping~~ — **done in Phase 3**, see below (`Layout.cs`, using the
+  user's real `keymap.json`).
 
 **Verified on real hardware (Python side only, for reference — see
 `main`):** the underlying byte-level protocol facts themselves
@@ -387,6 +424,195 @@ formula, the 3x-repeat commit cadence) — not re-derived in this port,
 only re-verified that .NET's transports carry them correctly. See
 `LIGHTBAR_REVERSE_ENGINEERING.md` and `LIGHTBAR_SUMMARY.md` on `main`
 for that full story.
+
+## Phase 3: effects — DONE (2026-09-09)
+
+All 21 real effects from `effects/*.py` on `main` ported into
+`JmaStudio.Effects` and confirmed rendering correctly on the real
+keyboard via `JmaStudio.HardwareTest`'s new `effect-demo`/
+`effect-demo-all` commands. That's every module with a `NAME`/`render()`
+except `controller_reactive.py`, which is now back in scope per the
+"Scope reversal" note above but not yet ported as of this writing —
+`mask.py` and `probe.py` (keymap-discovery diagnostic effects, not
+meant for end use) were included too, since "every existing effect"
+was explicit.
+
+**Architecture**: a common non-generic `IEffect` interface (`Name`,
+`DefaultParams`, `Render(t, numCells, EffectParams, EffectContext)`)
+so effects can be stored and dispatched by name in one registry despite
+each expecting its own strongly-typed params record — see
+`IEffect.cs`. Concrete effects derive from `Effect<TParams>` (not
+`IEffect` directly), which centralizes the one unavoidable
+`parameters as TParams ?? TypedDefaultParams` cast in a single base
+class rather than repeating it in all 21 effects. Every effect's params
+is its own `sealed record : EffectParams` (see `EffectParams.cs`) with
+`init` properties defaulting to the exact values transcribed from each
+Python module's own `DEFAULT_*` constants — this also sets these up
+well for Phase 4's `System.Text.Json` preset deserialization, since
+records with `init` properties bind directly by property name.
+
+**Files**:
+- `Layout.cs` — port of `effects/layout.py`, including the full
+  hand-authored `KEY_POSITIONS` table (transcribed verbatim — physically
+  measured data, not something to "clean up" or re-round) and the
+  keymap.json loader (`CellPositions`/`NameToIndex`).
+- `PseudoRandom.cs` — port of `effects/noise.py`'s `pseudo_random01`.
+- `ColorMath.cs` — HSV→RGB (port of Python's `colorsys.hsv_to_rgb`),
+  channel-wise lerp/scale (matching Python's truncating, not rounding,
+  `int()` casts), and a `PositiveMod` helper (C#'s `%` is a remainder
+  operator that keeps the dividend's sign; Python's is a true modulo —
+  several effects' wrap-around math needs the true-modulo behavior).
+- `EffectParams.cs` — all 21 params records.
+- `IEffect.cs` — the interface + `Effect<TParams>` base class + `EffectContext`.
+- `EffectRegistry.cs` — the C# analogue of `daemon/server.py`'s
+  `_load_effects()`. Unlike Python's reflection-based module scan, this
+  is a fixed, explicit list of `new SomeEffect(...)` calls — per settled
+  decision #3. Effect names match each Python module's `NAME` constant
+  exactly (important: Phase 4's preset migration depends on this, since
+  `presets.json` selects an effect by this exact string). Position-aware
+  effects load `keymap.json` ONCE here (constructor injection), mirroring
+  the Python modules' "load once at import time" behavior — re-create an
+  `EffectRegistry` (not just re-render) after `keymap.json` changes.
+- `Effects/BasicEffects.cs` — the 12 effects needing no spatial data:
+  `static`, `mask`, `probe`, `rainbow`, `puke`, `spectrum_cycle`,
+  `breathing`, `pulse`, `custom_keys`, `fire`, `confetti`, `starlight`.
+- `Effects/GamingZoneEffect.cs` — needs only the {name: index} map.
+- `Effects/PositionalEffects.cs` — the 6 effects needing full (row, col)
+  positions: `color_wipe`, `comet`, `scanner`, `aurora`, `ripple`, `rain`.
+- `Effects/GradientEffect.cs` — legacy 2-zone + multi-zone modes, ported
+  in full including the override/custom-color legacy patches.
+- `Effects/TypingReactiveEffect.cs` — the hardest one: reads
+  `EffectContext.KeyState` for the in-place flash + chasing bolts, AND
+  can recursively delegate to another registered effect by name
+  (`BaseEffectName`) for its background instead of a flat color —
+  mirrors the real `main`-branch preset "Red Chase" (`typing_reactive`
+  wrapping `custom_keys`). One deliberate behavior difference from
+  Python, documented in the file's header comment: if `BaseEffectName`
+  names a real effect but `BaseParams` is null or the wrong concrete
+  type for it, this falls back to that effect's own defaults (via
+  `DefaultParams`) rather than Python's "any dict works, unrecognized
+  keys ignored" duck typing. Shouldn't matter in practice.
+
+**Verified on real hardware**: all 21 effects run without exceptions
+and were watched live via `effect-demo-all 2.5` (cycles every
+registered effect for ~2.5s each) — user confirmed the whole cycle
+"looked right," including motion effects (rainbow/comet/scanner/rain
+sweeping) and ambient ones (breathing/pulse/aurora). Separately,
+`typing_reactive`'s recursive `base_effect` dispatch was specifically
+verified with `effect-demo-typing-with-base gradient 7` — user
+confirmed seeing the real gradient color-split background (not a flat
+fallback color) with a bright bolt pulsing outward roughly every 1.2s
+from a synthetic repeating "keypress," proving the delegation path
+actually renders the named effect's live output rather than silently
+falling back.
+
+**NOT independently re-verified per-effect beyond the visual group
+demo**: nobody did a byte-for-byte/pixel-for-pixel diff against the
+Python renderer's output for any single effect — verification here was
+"does it look like it's supposed to, live, on the real keyboard," same
+verification bar as Phase 2's hardware protocol proof, not a unit-test-
+level numeric comparison. If a future bug report says some specific
+effect's math is subtly off from the Python original, don't assume
+Phase 3 already ruled that out.
+
+## Phase 4: presets — DONE (2026-09-09)
+
+New `JmaStudio.Presets` project: atomic JSON persistence for keyboard
+presets, lightbar presets, the lightbar reactive config, and app config
+(default-preset pointers), plus a one-time migrator that reads the real
+Python-side files (`presets.json`, `lightbar_presets.json`,
+`lightbar_reactive.json`, `config.json` on `main`) and writes them into
+the new store. Confirmed live on real hardware for both keyboard and
+lightbar presets (see "Verified" below) — this is real user data, not
+synthetic test fixtures: 7 keyboard presets, 3 lightbar presets, the
+live reactive config, and both default-preset pointers, all migrated
+from this machine's actual files.
+
+**Format decision**: the new store is **not** byte-compatible with
+Python's JSON shape — it's a distinct, C#-native, strongly-typed format
+(PascalCase properties, a `"$effect"` polymorphic discriminator on
+`EffectParams`, `RgbColor` as `{"R":..,"G":..,"B":..}` objects rather
+than `[r,g,b]` arrays). Migration is a one-time, one-directional
+transform (old Python shape → new C# shape), not an ongoing
+compatibility layer — once migrated, the C# side never reads the old
+files again. This was a deliberate choice: preserving Python's untyped
+dict shape byte-for-byte would have meant compromising the strongly-
+typed `EffectParams` design (settled decision #3) just to match a
+format nothing will read anymore once this port is finished.
+
+**Files** (`JmaStudio.Presets`):
+- `AtomicJsonFile.cs` — the fix for the Python side's "crash mid-
+  `json.dump()` corrupts the whole file" risk (settled decision #6):
+  write to `<path>.tmp`, then `File.Move(..., overwrite: true)` --
+  atomic on the same NTFS volume.
+- `PresetJsonOptions.cs` — shared `JsonSerializerOptions`:
+  `WriteIndented` (stays hand-readable, matching the spirit of the
+  Python files), `IncludeFields` (needed because
+  `TypingReactiveParams.BoltDirections` is
+  `IReadOnlyList<(int Row, int Col)>`, and `ValueTuple` exposes its
+  data as public fields, not properties, which System.Text.Json
+  otherwise silently ignores), and `JsonStringEnumConverter` (so
+  `LightbarMode`/`BoltShape`/`BoltStyle` save as readable strings like
+  `"Radial"`, not raw integers).
+- `Models.cs` — `KeyboardPreset` (effect name + `EffectParams`),
+  `LightbarPreset` (a `Hardware.LightbarState` + nullable
+  `LightbarReactiveSettings` -- nullable because real presets like
+  "BLUE" predate reactive settings being bundled in at all),
+  `LightbarReactiveSettings` (the per-preset snapshot shape, no
+  `zone_boundaries` -- that's geometry calibration, not a preset
+  concern, matching Python's own `_reactive_settings_snapshot()`),
+  `LightbarReactiveConfig` (the live, non-preset config, WITH
+  `zone_boundaries`), `AppConfig` (the two default-preset pointers).
+- `JsonStore.cs` — a generic `JsonStore<T>` (one JSON file, atomic
+  load/save) and `PresetStore` (bundles the 4 real ones: new file names
+  `keyboard-presets.json`, `lightbar-presets.json`,
+  `lightbar-reactive-config.json`, `app-config.json`, distinct from the
+  Python names since this is a new format, not a drop-in replacement).
+- `PythonPresetMigrator.cs` — the one-time bridge. A `Parse(effectName,
+  JsonElement)` dispatcher covers all 21 effects' Python-side
+  snake_case field names (not just the 4 kinds the user's current real
+  presets happen to use -- `typing_reactive`, `custom_keys`, `gradient`,
+  `puke` -- covering all 21 means a future preset using any other
+  effect migrates correctly too, without this file needing revisiting).
+  `TypingReactiveParams`' `base_effect`/`base_params` are handled
+  recursively through the same dispatcher. Lightbar preset migration
+  preserves the exact same back-compat permissiveness
+  `Lightbar.apply_state()` already has: no `"type": "mode"` key means
+  static (real presets like "BLUE" have no `"type"` key at all).
+  `MigrateAll(pythonRepoRoot, store)` does all 4 files in one call and
+  is idempotent (safe to re-run; always fully overwrites from current
+  Python-side source data).
+
+**Verified on real hardware**: migrated all 4 real files from this
+machine (`dotnet run ... -- migrate-presets`) — correct counts (7
+keyboard presets, 3 lightbar presets) and correct default-preset
+pointers ("Red Chase", "Rainbow"). Applied 3 different migrated
+keyboard presets live via `preset-demo` -- `ZONES` (multi-zone
+gradient, 4 colors + boundaries: user confirmed) and `gradient_only`
+(legacy 2-zone gradient with per-key overrides AND a custom per-key
+color: user confirmed) exercise `GradientEffect` paths Phase 3's own
+verification never touched; `Red Chase` (via the standalone
+`effect-demo-from-status` tool built for the earlier interactive
+testing request, not `preset-demo`, but the same underlying migrated
+params) re-confirms `typing_reactive` wrapping `custom_keys`. Applied 2
+migrated lightbar presets live via `lightbar-preset-demo` and
+`Lightbar.ApplyState()` (**requires Administrator**) -- `BLUE` (static
+per-zone, no `"type"` key -- the back-compat path) and `Rainbow`
+(animated mode) both confirmed by the user on the physical lightbar,
+closing out the one remaining untested `Lightbar` code path
+(`SetMode()`) from Phase 2.
+
+**NOT independently verified**: `rainbow_puke`, `rainbow_radial_chase`,
+`white_on_white`, and `gradient_white_chase` (the other 4 of the 7 real
+keyboard presets) were migrated but not individually re-applied live --
+low risk, since they exercise the same `puke`/`typing_reactive`/
+`gradient` code paths already proven via other presets and Phase 3's
+group demo, but not literally clicked through one by one. Also not
+tested: the lightbar reactive config and app-config migration are
+structurally verified (correct field values land in the new JSON files)
+but not exercised through any live "apply the default preset at
+startup" or "reactive flash on keypress" behavior, since neither of
+those behaviors has a Windows Service to run inside of yet (Phase 5).
 
 ## Key technical decisions for the scaffold itself
 
@@ -415,11 +641,14 @@ for that full story.
   windows/
     HANDOFF.md
     JmaStudio.sln
+    data/                       -- migrated preset/config JSON -- real user data, tracked in git
+                                   (not gitignored), same as presets.json etc. are on `main`
     src/
       JmaStudio.Hardware/       -- Keyboard.cs, Lightbar.cs (protocol only, no HTTP/service/UI)
-      JmaStudio.HardwareTest/   -- bare console app, Phase 2's real-hardware proof
-      (later phases add: JmaStudio.Effects, JmaStudio.Presets,
-       JmaStudio.Service, JmaStudio.Gui, JmaStudio.Installer)
+      JmaStudio.Effects/        -- all 21 ported effects, IEffect/EffectRegistry (Phase 3)
+      JmaStudio.Presets/        -- atomic preset/config store + Python migration (Phase 4)
+      JmaStudio.HardwareTest/   -- bare console app, Phase 2/3/4's real-hardware proof
+      (later phases add: JmaStudio.Service, JmaStudio.Gui, JmaStudio.Installer)
   ```
 
 ## How to build / run / test
@@ -440,11 +669,37 @@ for that full story.
   from an elevated terminal, or see the elevation-wrapper-script note
   under "How this was actually verified" above if scripting it from a
   non-elevated automation context).
-- Solution currently has 2 projects: `JmaStudio.Hardware` (class
-  library — `Keyboard.cs`, `Lightbar.cs`, `LightbarDiagnostics.cs`) and
-  `JmaStudio.HardwareTest` (the console app above). No tests project
-  yet — "testing" so far means the console app against real hardware,
-  by design (see Phase 2's stated purpose).
+- Solution currently has 4 projects: `JmaStudio.Hardware` (protocol —
+  `Keyboard.cs`, `Lightbar.cs`, `LightbarDiagnostics.cs`),
+  `JmaStudio.Effects` (all 21 effects + `IEffect`/`EffectRegistry`),
+  `JmaStudio.Presets` (atomic store + Python migration), and
+  `JmaStudio.HardwareTest` (the console app). No tests project yet —
+  "testing" so far means the console app against real hardware, by
+  design (see Phase 2/3/4's stated purpose).
+- Effect commands (from `windows/`, no elevation needed):
+  `dotnet run --project src/JmaStudio.HardwareTest -- effects-list`,
+  `... -- effect-demo <name> [seconds] [--synthetic-key idx]`,
+  `... -- effect-demo-all [secondsPerEffect]`,
+  `... -- effect-demo-typing-with-base <baseEffectName> [seconds]`,
+  `... -- effect-demo-from-status <statusJsonPath> [seconds]` (ad hoc,
+  loads typing_reactive/custom_keys from a saved `GET /status` blob —
+  see `AdHocPresetLoader.cs`, superseded for anything else by the real
+  preset commands below), `... -- effect-live <statusJsonPath>
+  [maxSeconds]` (same, but reacts to REAL keystrokes via a
+  `GlobalKeyboardHook`/`WindowsKeyMap` global low-level keyboard hook --
+  built for interactive testing, no elevation needed; **stop the Python
+  daemon first** if it's running, or both processes will fight over the
+  same keyboard on every real keystroke and produce exactly the
+  flickering/color-bleeding this was hit and fixed once already this
+  session). All default to the real repo-root `keymap.json` (override
+  with `--keymap <path>` if running from somewhere else).
+- Preset commands (from `windows/`):
+  `... -- migrate-presets [--python-root path] [--out-dir path]` (no
+  elevation; defaults to this repo's root and `windows/data/`),
+  `... -- preset-list [--out-dir path]`,
+  `... -- preset-demo <name> [seconds] [--out-dir path] [--keymap path]`
+  (no elevation), `... -- lightbar-preset-demo <name> [--out-dir path]`
+  (**requires Administrator**).
 
 ## Suggested phasing (from the planning conversation)
 
@@ -457,11 +712,18 @@ for that full story.
    and "Verified vs. unverified" above
 3. Port every existing effect (including typing-reactive and
    custom_keys) behind the `IEffect` abstraction; confirm each looks
-   right on real hardware
+   right on real hardware — **DONE**, see "Phase 3: effects" above
 4. Preset persistence layer (atomic writes) + migration of existing
-   on-disk preset data into the new system
+   on-disk preset data into the new system — **DONE**, see "Phase 4:
+   presets" above
 5. Windows Service wrapper (boot-time start, disk-persisted state
-   restore, `AcerLightingService` disable-at-startup)
+   restore, `AcerLightingService` disable-at-startup) **+
+   controller-reactive support** (`Controller.cs` in `JmaStudio.Hardware`,
+   the reactive effect in `JmaStudio.Effects`, the full-override enable/
+   disable logic and `controller_reactive.json` migration in the
+   service itself) — the user explicitly chose to build this here
+   rather than in Phase 4, since it depends on the enable/disable
+   plumbing this phase provides
 6. WPF GUI: replicate existing UX, add Create Preset + dominance-
    reassert button
 7. Installer (location prompt, consent notice, service registration,

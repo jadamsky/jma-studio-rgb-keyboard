@@ -9,6 +9,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JmaStudio.Hardware", "src\J
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JmaStudio.HardwareTest", "src\JmaStudio.HardwareTest\JmaStudio.HardwareTest.csproj", "{103062A6-C133-4CD3-ADEE-5F1C83C2836F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JmaStudio.Effects", "src\JmaStudio.Effects\JmaStudio.Effects.csproj", "{E43DFF81-B093-4E2A-B819-FD422B64C484}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JmaStudio.Presets", "src\JmaStudio.Presets\JmaStudio.Presets.csproj", "{35BF6D4A-F15D-41CB-8888-75EE650CFDA6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,9 +30,19 @@ Global
 		{103062A6-C133-4CD3-ADEE-5F1C83C2836F}.Debug|Any CPU.Build.0 = Debug|x64
 		{103062A6-C133-4CD3-ADEE-5F1C83C2836F}.Release|Any CPU.ActiveCfg = Release|x64
 		{103062A6-C133-4CD3-ADEE-5F1C83C2836F}.Release|Any CPU.Build.0 = Release|x64
+		{E43DFF81-B093-4E2A-B819-FD422B64C484}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{E43DFF81-B093-4E2A-B819-FD422B64C484}.Debug|Any CPU.Build.0 = Debug|x64
+		{E43DFF81-B093-4E2A-B819-FD422B64C484}.Release|Any CPU.ActiveCfg = Release|x64
+		{E43DFF81-B093-4E2A-B819-FD422B64C484}.Release|Any CPU.Build.0 = Release|x64
+		{35BF6D4A-F15D-41CB-8888-75EE650CFDA6}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{35BF6D4A-F15D-41CB-8888-75EE650CFDA6}.Debug|Any CPU.Build.0 = Debug|x64
+		{35BF6D4A-F15D-41CB-8888-75EE650CFDA6}.Release|Any CPU.ActiveCfg = Release|x64
+		{35BF6D4A-F15D-41CB-8888-75EE650CFDA6}.Release|Any CPU.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A7ECE5D1-523F-40E9-AB57-57BC2EA7FD9A} = {32CD7852-5ADF-46E6-87EB-27E47112A1DF}
 		{103062A6-C133-4CD3-ADEE-5F1C83C2836F} = {32CD7852-5ADF-46E6-87EB-27E47112A1DF}
+		{E43DFF81-B093-4E2A-B819-FD422B64C484} = {32CD7852-5ADF-46E6-87EB-27E47112A1DF}
+		{35BF6D4A-F15D-41CB-8888-75EE650CFDA6} = {32CD7852-5ADF-46E6-87EB-27E47112A1DF}
 	EndGlobalSection
 EndGlobal
