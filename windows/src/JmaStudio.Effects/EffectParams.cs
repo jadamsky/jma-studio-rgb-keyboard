@@ -13,40 +13,22 @@ namespace JmaStudio.Effects;
 /// one untyped dict the way Python's effects/*.py do -- see
 /// windows/HANDOFF.md's settled decision #3.
 ///
-/// The [JsonDerivedType] attributes below make this polymorphic under
-/// System.Text.Json (a "$effect" string discriminator picks the right
-/// concrete record on deserialize) -- needed so JmaStudio.Presets can
-/// save/load a preset's params without knowing its concrete type ahead
-/// of time. Discriminator strings match each Python module's NAME
-/// constant, for the same reason EffectRegistry's dictionary keys do
-/// (see EffectRegistry.cs) -- consistency, not a hard requirement.
-/// This is for NEW C#-native preset files; migrating OLD Python JSON
-/// (different, snake_case field names) is a separate, explicit parser
-/// in JmaStudio.Presets, not something this attribute-based scheme
-/// handles automatically.</summary>
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "$effect")]
-[JsonDerivedType(typeof(StaticParams), "static")]
-[JsonDerivedType(typeof(MaskParams), "mask")]
-[JsonDerivedType(typeof(ProbeParams), "probe")]
-[JsonDerivedType(typeof(RainbowParams), "rainbow")]
-[JsonDerivedType(typeof(PukeParams), "puke")]
-[JsonDerivedType(typeof(SpectrumCycleParams), "spectrum_cycle")]
-[JsonDerivedType(typeof(BreathingParams), "breathing")]
-[JsonDerivedType(typeof(PulseParams), "pulse")]
-[JsonDerivedType(typeof(CustomKeysParams), "custom_keys")]
-[JsonDerivedType(typeof(GamingZoneParams), "gaming_zone")]
-[JsonDerivedType(typeof(StarlightParams), "starlight")]
-[JsonDerivedType(typeof(ConfettiParams), "confetti")]
-[JsonDerivedType(typeof(FireParams), "fire")]
-[JsonDerivedType(typeof(ColorWipeParams), "color_wipe")]
-[JsonDerivedType(typeof(CometParams), "comet")]
-[JsonDerivedType(typeof(ScannerParams), "scanner")]
-[JsonDerivedType(typeof(AuroraParams), "aurora")]
-[JsonDerivedType(typeof(RippleParams), "ripple")]
-[JsonDerivedType(typeof(RainParams), "rain")]
-[JsonDerivedType(typeof(GradientParams), "gradient")]
-[JsonDerivedType(typeof(TypingReactiveParams), "typing_reactive")]
-[JsonDerivedType(typeof(ControllerReactiveParams), "controller_reactive")]
+/// Polymorphic JSON (a "$effect" string discriminator picks the right
+/// concrete record) is handled by EffectParamsJsonConverter, NOT the
+/// built-in [JsonPolymorphic]/[JsonDerivedType] attributes -- those
+/// were tried first and have a real, sharp-edged bug: they require
+/// "$effect" to be the FIRST property in the JSON object or
+/// deserialization fails outright (hit live: a hand-built request with
+/// "colors" before "$effect" 500'd). The custom converter buffers the
+/// whole object before looking at any property, so field order from
+/// any real client (a future GUI, curl, PowerShell's ConvertTo-Json on
+/// an unordered hashtable) stops mattering. Discriminator strings
+/// match each Python module's NAME constant, for the same reason
+/// EffectRegistry's dictionary keys do (see EffectRegistry.cs) --
+/// consistency, not a hard requirement. This is for NEW C#-native
+/// preset files; migrating OLD Python JSON (different, snake_case
+/// field names) is a separate, explicit parser in JmaStudio.Presets.</summary>
+[JsonConverter(typeof(EffectParamsJsonConverter))]
 public abstract record EffectParams;
 
 public sealed record StaticParams : EffectParams
