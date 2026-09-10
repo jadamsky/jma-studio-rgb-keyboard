@@ -106,6 +106,15 @@ builder.Services.AddSingleton(inputListener);
 builder.Services.AddSingleton<IHostedService>(sp => new RenderLoopService(
     daemonState, effectRegistry, keyboard, inputListener, controller,
     sp.GetRequiredService<ILogger<RenderLoopService>>()));
+// LightbarReactiveManager is constructed here (not via a DI factory) so
+// the same instance can be both started as a background loop AND handed
+// directly to Endpoints.MapLightbar for its ResetDedup() call -- same
+// pattern as daemonState/lightbarController/controllerReactiveManager
+// above.
+var lightbarReactiveManager = new LightbarReactiveManager(
+    lightbarController, inputListener, presetStore, keymapPath,
+    LoggerFactory.Create(b => b.AddConsole()).CreateLogger<LightbarReactiveManager>());
+builder.Services.AddSingleton<IHostedService>(lightbarReactiveManager);
 
 var app = builder.Build();
 
@@ -123,8 +132,8 @@ app.Use(async (context, next) =>
 });
 
 Endpoints.MapKeyboard(app, daemonState, effectRegistry, presetStore, keyboard, controller);
-Endpoints.MapLightbar(app, lightbarController, presetStore);
-Endpoints.MapControllerReactive(app, controllerReactiveManager, presetStore);
+Endpoints.MapLightbar(app, lightbarController, presetStore, daemonState, lightbarReactiveManager);
+Endpoints.MapControllerReactive(app, controllerReactiveManager, presetStore, controller);
 Endpoints.MapLayout(app, keymapPath);
 
 // Loopback-only, same port the Python daemon used -- no auth either

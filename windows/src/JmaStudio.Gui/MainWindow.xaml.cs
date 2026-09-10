@@ -79,15 +79,11 @@ public partial class MainWindow : Window
         InitializeComponent();
         _uiReady = true; // every named element now exists; see the field's comment
 
-        // Centered left-to-right, flush against the top of the screen --
-        // matches gui.py's _initial_position() (its own comment there: the
-        // OS/toolkit default placement left the window too low, needing a
-        // manual drag up every time it opened). WPF's SystemParameters are
-        // already DPI-independent, unlike the raw GetSystemMetrics call
-        // gui.py uses, so no empirical pixel-nudge is needed here.
-        WindowStartupLocation = WindowStartupLocation.Manual;
-        Left = Math.Max(0, (SystemParameters.PrimaryScreenWidth - Width) / 2);
-        Top = 0;
+        // Centered left-to-right, flush against the top of the screen's
+        // usable work area -- matches gui.py's _initial_position() (its
+        // own comment there: the OS/toolkit default placement left the
+        // window too low, needing a manual drag up every time it opened).
+        WindowPlacement.PlaceTopCentered(this);
         _framePollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _framePollTimer.Tick += async (_, _) => await PollFrameAsync();
         _statusPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
@@ -198,24 +194,12 @@ public partial class MainWindow : Window
 
     private void PreviewBoardHost_SizeChanged(object sender, SizeChangedEventArgs e) => BuildKeyboardCanvas();
 
-    // Precision-touchpad two-finger scroll drivers report a much larger
-    // per-event wheel delta than a physical mouse wheel's fixed 120-per-
-    // notch (scaled to swipe speed, not quantized). WPF's default
-    // ScrollViewer wheel handling scales scroll distance directly by that
-    // delta, so a fast swipe turns into a huge jump -- a real mouse
-    // wheel's normal notch (delta exactly 120) isn't affected by this at
-    // all, only touchpad's inflated values are. Clamping the number of
-    // "lines" scrolled per event to a normal single-notch's worth tames
-    // the touchpad case while leaving real wheel scrolling unchanged.
-    private void MainScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
-    {
-        e.Handled = true;
-        const double lineHeight = 16.0; // WPF's default line-scroll unit
-        const double maxLinesPerEvent = 3.0; // matches SystemParameters.WheelScrollLines' usual default
-        double rawLines = e.Delta / 120.0 * SystemParameters.WheelScrollLines;
-        double clampedLines = Math.Clamp(rawLines, -maxLinesPerEvent, maxLinesPerEvent);
-        MainScrollViewer.ScrollToVerticalOffset(MainScrollViewer.VerticalOffset - clampedLines * lineHeight);
-    }
+    // See ScrollBehavior.cs for why this is needed (touchpad two-finger
+    // scroll was reported "really fast" -- WPF's default ScrollViewer
+    // wheel handling scales scroll distance directly by wheel delta,
+    // which touchpad drivers report far larger than a physical notch).
+    private void MainScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e) =>
+        ScrollBehavior.HandleMouseWheel(MainScrollViewer, e);
 
     private async Task PollFrameAsync()
     {
@@ -415,11 +399,35 @@ public partial class MainWindow : Window
         ShowToast(ok ? $"\"{_activePresetName}\" is now the startup default" : "Failed to set default");
     }
 
-    private void LightbarBtn_Click(object sender, RoutedEventArgs e) =>
-        MessageBox.Show(this, "Lightbar window is a follow-up piece of Phase 6, not built in this pass yet.", "Coming soon");
+    private LightbarWindow? _lightbarWindow;
 
-    private void ControllerReactiveBtn_Click(object sender, RoutedEventArgs e) =>
-        MessageBox.Show(this, "Controller Reactive window is a follow-up piece of Phase 6, not built in this pass yet.", "Coming soon");
+    private void LightbarBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lightbarWindow is null || !_lightbarWindow.IsLoaded)
+        {
+            _lightbarWindow = new LightbarWindow { Owner = this };
+            _lightbarWindow.Show();
+        }
+        else
+        {
+            _lightbarWindow.Activate();
+        }
+    }
+
+    private ControllerReactiveWindow? _controllerReactiveWindow;
+
+    private void ControllerReactiveBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_controllerReactiveWindow is null || !_controllerReactiveWindow.IsLoaded)
+        {
+            _controllerReactiveWindow = new ControllerReactiveWindow { Owner = this };
+            _controllerReactiveWindow.Show();
+        }
+        else
+        {
+            _controllerReactiveWindow.Activate();
+        }
+    }
 
     private void DiagnosticsBtn_Click(object sender, RoutedEventArgs e) =>
         MessageBox.Show(this, "Diagnostics window is a follow-up piece of Phase 6, not built in this pass yet.", "Coming soon");

@@ -8,3 +8,5 @@ public sealed record LightbarColorRequest(RgbColor Color);
 public sealed record LightbarModeRequest(LightbarMode Mode, RgbColor Color, int Speed = 5, int Brightness = 100);
 public sealed record LightbarBrightnessRequest(int Value);
 public sealed record DefaultRequest(string Name);
+public sealed record LightbarReactiveConfigRequest(
+    bool Enabled, RgbColor BackgroundColor, IReadOnlyDictionary<int, RgbColor> ZoneFlashColors, RgbColor AllFlashColor);

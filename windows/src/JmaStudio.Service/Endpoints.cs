@@ -7,10 +7,10 @@
 // those) -- this is a NEW client's API surface, not a compatibility layer.
 //
 // Route coverage is deliberately a solid CORE subset, not an exhaustive
-// mirror of every Python endpoint (e.g. no /keypress forwarding path,
-// no /lightbar/reactive keypress-driven flash loop yet) -- see
-// windows/HANDOFF.md's Phase 5 section for the explicit list of what's
-// NOT here yet.
+// mirror of every Python endpoint (e.g. no /keypress forwarding path --
+// WPF's native controls don't have WebView2's focus-stealing problem, so
+// this hasn't been needed) -- see windows/HANDOFF.md's Phase 5/6 sections
+// for the explicit list of what's NOT here yet.
 
 using JmaStudio.Effects;
 using JmaStudio.Hardware;
@@ -109,7 +109,9 @@ public static class Endpoints
         });
     }
 
-    public static void MapLightbar(WebApplication app, LightbarController lb, PresetStore store)
+    public static void MapLightbar(
+        WebApplication app, LightbarController lb, PresetStore store,
+        DaemonState keyboardState, LightbarReactiveManager reactive)
     {
         app.MapGet("/lightbar/status", () => lb.Available
             ? Results.Ok(new { connected = true, state = lb.GetState() })
@@ -193,6 +195,56 @@ public static class Endpoints
             store.AppConfig.Save(store.AppConfig.Load() with { LightbarDefaultPreset = req.Name });
             return Results.Ok();
         });
+
+        // ---- reactive (keyboard -> lightbar), port of daemon/server.py's
+        // GET/POST /lightbar/reactive + /lightbar/reactive/capture_zones ----
+
+        app.MapGet("/lightbar/reactive", () => Results.Ok(store.LightbarReactiveConfig.Load()));
+
+        app.MapPost("/lightbar/reactive", (LightbarReactiveConfigRequest req) =>
+        {
+            LightbarReactiveConfig existing = store.LightbarReactiveConfig.Load();
+            store.LightbarReactiveConfig.Save(existing with
+            {
+                Enabled = req.Enabled,
+                BackgroundColor = req.BackgroundColor,
+                ZoneFlashColors = req.ZoneFlashColors,
+                AllFlashColor = req.AllFlashColor,
+            });
+            reactive.ResetDedup(); // force the loop to re-apply on its next tick
+            return Results.Ok();
+        });
+
+        app.MapPost("/lightbar/reactive/capture_zones", () =>
+        {
+            // Reads the keyboard's CURRENT gradient zone boundaries
+            // (wherever they live -- plain gradient, or gradient wrapped
+            // as typing_reactive's base_effect) and stores them for the
+            // reactive loop's zone mapping. A one-time snapshot, not a
+            // live link -- if the keyboard's zones change later, this
+            // needs to be called again.
+            (string effectName, EffectParams parameters) = keyboardState.GetEffect();
+            GradientParams? gradientParams = (effectName, parameters) switch
+            {
+                ("gradient", GradientParams gp) => gp,
+                ("typing_reactive", TypingReactiveParams { BaseEffectName: "gradient", BaseParams: GradientParams bgp }) => bgp,
+                _ => null,
+            };
+            if (gradientParams is not { Colors: { Count: > 0 }, Boundaries: { Count: > 0 } })
+            {
+                return Results.BadRequest(new
+                {
+                    error = "the keyboard isn't currently running a multi-zone gradient " +
+                            "(with explicit boundaries) to capture from",
+                });
+            }
+            LightbarReactiveConfig config = store.LightbarReactiveConfig.Load() with
+            {
+                ZoneBoundaries = gradientParams.Boundaries,
+            };
+            store.LightbarReactiveConfig.Save(config);
+            return Results.Ok(new { zoneBoundaries = config.ZoneBoundaries, numZones = gradientParams.Colors.Count });
+        });
     }
 
     /// <summary>Cell layout -- so the GUI (or any client) can lay out a
@@ -218,7 +270,7 @@ public static class Endpoints
         });
     }
 
-    public static void MapControllerReactive(WebApplication app, ControllerReactiveManager manager, PresetStore store)
+    public static void MapControllerReactive(WebApplication app, ControllerReactiveManager manager, PresetStore store, Controller? controller)
     {
         app.MapGet("/controller-reactive/settings", () => Results.Ok(manager.GetLiveSettings()));
 
@@ -246,6 +298,27 @@ public static class Endpoints
             return Results.Ok();
         });
 
-        app.MapGet("/controller-reactive/status", () => Results.Ok(new { enabled = manager.Enabled }));
+        app.MapGet("/controller-reactive/status", () => Results.Ok(new
+        {
+            connected = controller is not null && controller.IsConnected,
+            enabled = manager.Enabled,
+        }));
+
+        // The "Default" button's target values -- a single source of
+        // truth shared with ControllerReactiveParams' own record
+        // defaults, rather than the GUI hardcoding a second copy of
+        // these numbers. Mirrors daemon/server.py's own
+        // GET /controller_reactive/defaults.
+        app.MapGet("/controller-reactive/defaults", () =>
+        {
+            var defaults = new ControllerReactiveParams();
+            return Results.Ok(new
+            {
+                backgroundEnabled = defaults.BackgroundEnabled,
+                backgroundColor = defaults.BackgroundColor,
+                groupColor = defaults.LeftStick.Idle,
+                deadzone = defaults.Deadzone,
+            });
+        });
     }
 }

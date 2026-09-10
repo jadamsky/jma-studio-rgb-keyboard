@@ -25,6 +25,12 @@ public sealed record LightbarStatusResponse(bool Connected, LightbarState? State
 public sealed record LayoutCell(int Index, string Name, double Row, double Col);
 public sealed record LayoutResponse(LayoutCell[] Cells, int NumCells);
 
+public sealed record DefaultPresetResponse(string? DefaultPreset);
+public sealed record CaptureZonesResponse(IReadOnlyList<double> ZoneBoundaries, int NumZones);
+public sealed record ControllerReactiveStatusResponse(bool Connected, bool Enabled);
+public sealed record ControllerReactiveDefaultsResponse(
+    bool BackgroundEnabled, RgbColor BackgroundColor, RgbColor GroupColor, double Deadzone);
+
 public sealed class ApiClient
 {
     private readonly HttpClient _http;
@@ -97,8 +103,36 @@ public sealed class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<bool> SetLightbarZoneAsync(int zone, RgbColor color)
+    {
+        var response = await _http.PostAsJsonAsync("/lightbar/zone", new { Zone = zone, Color = color }, Json);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> SetLightbarModeAsync(LightbarMode mode, RgbColor color, int speed, int brightness)
+    {
+        var response = await _http.PostAsJsonAsync("/lightbar/mode",
+            new { Mode = mode, Color = color, Speed = speed, Brightness = brightness }, Json);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> SetLightbarBrightnessAsync(int value)
+    {
+        var response = await _http.PostAsJsonAsync("/lightbar/brightness", new { Value = value }, Json);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> TurnOffLightbarAsync() =>
+        (await _http.PostAsync("/lightbar/off", null)).IsSuccessStatusCode;
+
     public async Task<Dictionary<string, LightbarPreset>> GetLightbarPresetsAsync() =>
         await _http.GetFromJsonAsync<Dictionary<string, LightbarPreset>>("/lightbar/presets", Json) ?? new();
+
+    public async Task<bool> SaveLightbarPresetAsync(string name)
+    {
+        var response = await _http.PostAsJsonAsync("/lightbar/presets/save", new { Name = name }, Json);
+        return response.IsSuccessStatusCode;
+    }
 
     public async Task<bool> ApplyLightbarPresetAsync(string name)
     {
@@ -106,14 +140,69 @@ public sealed class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<bool> DeleteLightbarPresetAsync(string name)
+    {
+        var response = await _http.DeleteAsync($"/lightbar/presets/{Uri.EscapeDataString(name)}");
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<string?> GetLightbarDefaultPresetAsync()
+    {
+        var res = await _http.GetFromJsonAsync<DefaultPresetResponse>("/lightbar/default", Json);
+        return res?.DefaultPreset;
+    }
+
+    public async Task<bool> SetLightbarDefaultPresetAsync(string name)
+    {
+        var response = await _http.PostAsJsonAsync("/lightbar/default", new { Name = name }, Json);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<LightbarReactiveConfig?> GetLightbarReactiveConfigAsync() =>
+        await _http.GetFromJsonAsync<LightbarReactiveConfig>("/lightbar/reactive", Json);
+
+    public async Task<bool> SetLightbarReactiveConfigAsync(
+        bool enabled, RgbColor backgroundColor, IReadOnlyDictionary<int, RgbColor> zoneFlashColors, RgbColor allFlashColor)
+    {
+        var response = await _http.PostAsJsonAsync("/lightbar/reactive", new
+        {
+            Enabled = enabled, BackgroundColor = backgroundColor,
+            ZoneFlashColors = zoneFlashColors, AllFlashColor = allFlashColor,
+        }, Json);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<CaptureZonesResponse?> CaptureLightbarReactiveZonesAsync()
+    {
+        var response = await _http.PostAsync("/lightbar/reactive/capture_zones", null);
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<CaptureZonesResponse>(Json)
+            : null;
+    }
+
     // ---- controller-reactive ----
 
     public async Task<ControllerReactiveParams?> GetControllerReactiveSettingsAsync() =>
         await _http.GetFromJsonAsync<ControllerReactiveParams>("/controller-reactive/settings", Json);
+
+    public async Task<bool> SetControllerReactiveSettingsAsync(ControllerReactiveParams settings)
+    {
+        var response = await _http.PostAsJsonAsync("/controller-reactive/settings", settings, Json);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> SaveControllerReactiveSettingsAsync() =>
+        (await _http.PostAsync("/controller-reactive/settings/save", null)).IsSuccessStatusCode;
 
     public async Task<bool> EnableControllerReactiveAsync() =>
         (await _http.PostAsync("/controller-reactive/enable", null)).IsSuccessStatusCode;
 
     public async Task<bool> DisableControllerReactiveAsync() =>
         (await _http.PostAsync("/controller-reactive/disable", null)).IsSuccessStatusCode;
+
+    public async Task<ControllerReactiveStatusResponse?> GetControllerReactiveStatusAsync() =>
+        await _http.GetFromJsonAsync<ControllerReactiveStatusResponse>("/controller-reactive/status", Json);
+
+    public async Task<ControllerReactiveDefaultsResponse?> GetControllerReactiveDefaultsAsync() =>
+        await _http.GetFromJsonAsync<ControllerReactiveDefaultsResponse>("/controller-reactive/defaults", Json);
 }

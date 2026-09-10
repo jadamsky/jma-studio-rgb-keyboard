@@ -27,14 +27,26 @@
 //      threads -- 8 concurrent Task.Run threads sharing one instance
 //      all succeeded with zero exceptions. No .NET equivalent of
 //      Python's threading.local()+pythoncom.CoInitialize() per-thread
-//      dance is needed. (This class still resolves a fresh instance per
-//      call rather than caching one, matching the Python side's own
-//      stated rationale that resolution is cheap -- not because caching
-//      was shown to be unsafe.)
+//      dance is needed.
+//
+// UPDATE (2026-09-10, Lightbar reactive window): the "resolution is
+// cheap, don't bother caching" assumption above turned out to be WRONG
+// for .NET specifically, unlike the Python side it was carried over
+// from. Measured live: a single CallMethod() (one ManagementObjectSearcher
+// WQL query + InvokeMethod) took 83-102ms end to end -- FlashZones()
+// makes 5 of these per call (1x SetGamingLED, 1x SetGamingKBBacklight,
+// 3x SetGamingRgbKb), so a single reactive-loop tick could take
+// 400-500ms against an 80ms budget, which is exactly why the keyboard
+// -> lightbar reactive flash felt "glitchier and slower" than the
+// Python original on real hardware. Now cached (GetCachedInstance()
+// below) -- resolved once, reused for every call, re-resolved only if
+// a call against the cached instance throws (e.g. a WMI provider
+// restart invalidated it).
 //
 // Requires an elevated (Administrator) process for every Set* method.
 
 using System.Management;
+using System.Threading.Tasks;
 
 namespace JmaStudio.Hardware;
 
@@ -138,13 +150,10 @@ public sealed class Lightbar
 
     /// <summary>
     /// Returns a fresh AcerGamingFunction WMI instance, or null if this
-    /// machine doesn't expose it. Resolved fresh on every call rather
-    /// than cached -- mirrors the Python side's rationale (a local WMI
-    /// provider lookup is cheap). Confirmed via JmaStudio.HardwareTest's
-    /// thread-affinity probe that caching and sharing one instance
-    /// across threads is ALSO safe in .NET, so this could be optimized
-    /// to cache later if profiling ever shows the per-call lookup cost
-    /// matters -- not done here since there's no evidence it's needed.
+    /// machine doesn't expose it. Used for the one-time existence probe
+    /// in Open() and to (re-)populate the cache in GetCachedInstance() --
+    /// NOT used directly for every Set* call anymore, see that method's
+    /// comment and the header comment's 2026-09-10 update for why.
     /// </summary>
     private static ManagementObject? FindInstance()
     {
@@ -163,11 +172,64 @@ public sealed class Lightbar
         }
     }
 
+    // Resolved once, reused for every subsequent Set* call -- see the
+    // header comment's 2026-09-10 update. Static (not per-Lightbar-
+    // instance) since only one Lightbar is ever constructed in this
+    // process, matching the rest of this class's existing static
+    // CallMethod/CallArray/CallU64 helpers. Confirmed safe to share
+    // across threads via JmaStudio.HardwareTest's thread-affinity probe.
+    private static ManagementObject? _cachedInstance;
+
+    private static ManagementObject GetCachedInstance()
+    {
+        return _cachedInstance ??= FindInstance()
+            ?? throw new InvalidOperationException("AcerGamingFunction WMI class not found.");
+    }
+
+    // GetMethodParameters(method) fetches the WMI class's method
+    // signature from the CIM repository -- another round trip, done on
+    // every single call if not cached. Only 3 distinct method names are
+    // ever used (SetGamingLED, SetGamingKBBacklight, SetGamingRgbKb), so
+    // caching the parameter-template object per method name removes this
+    // cost too. The template describes the CLASS's method shape, not any
+    // one instance, so it stays valid even if _cachedInstance itself is
+    // later invalidated and re-resolved -- cleared together below purely
+    // for simplicity, not because it would otherwise go stale.
+    // ConcurrentDictionary (not a plain Dictionary + shared mutable
+    // template) because FlashZones now fires its 3 SetGamingRgbKb calls
+    // concurrently (see that method's own comment) -- each call clones
+    // its own copy of the cached template before setting "gmInput" and
+    // invoking, so 3 threads mutating 3 clones in parallel can never
+    // race on one shared property bag the way sharing the template
+    // object itself would.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ManagementBaseObject> _paramTemplates = new();
+
     private static object CallMethod(string method, object gmInput)
     {
-        using ManagementObject? instance = FindInstance()
-            ?? throw new InvalidOperationException("AcerGamingFunction WMI class not found.");
-        using ManagementBaseObject inParams = instance.GetMethodParameters(method);
+        try
+        {
+            return CallMethodOn(GetCachedInstance(), method, gmInput);
+        }
+        catch (ManagementException)
+        {
+            // The cached instance may have been invalidated (e.g. a WMI
+            // provider restart) -- drop it and resolve fresh exactly
+            // once before giving up, rather than caching a dead handle
+            // forever after the first hiccup.
+            _cachedInstance?.Dispose();
+            _cachedInstance = null;
+            _paramTemplates.Clear();
+            return CallMethodOn(GetCachedInstance(), method, gmInput);
+        }
+    }
+
+    private static object CallMethodOn(ManagementObject instance, string method, object gmInput)
+    {
+        ManagementBaseObject template = _paramTemplates.GetOrAdd(method, instance.GetMethodParameters);
+        // Clone rather than mutate the cached template directly -- see
+        // the field's own comment on why this matters once multiple
+        // zone writes can be in flight concurrently.
+        using ManagementBaseObject inParams = (ManagementBaseObject)template.Clone();
         inParams["gmInput"] = gmInput;
         using ManagementBaseObject outParams = instance.InvokeMethod(method, inParams, null);
         return outParams["gmOutput"];
@@ -266,11 +328,24 @@ public sealed class Lightbar
         }
         SendLed();
         SendKbCommit(_brightness);
-        foreach ((int zone, int mask) in ZoneMasks)
+        // Fired concurrently, not one after another: each SetGamingRgbKb
+        // call costs ~12-15ms even after caching (see the header
+        // comment's 2026-09-10 update), so a sequential loop over 3
+        // zones left a real ~25-30ms gap between zone 1's color actually
+        // landing on the hardware and zone 3's -- visible as "zone 1 out
+        // of sync with 2/3" specifically on an all-zone flash (zone 4),
+        // where all three are supposed to change at once. Confirmed safe
+        // via JmaStudio.HardwareTest's thread-affinity probe (concurrent
+        // InvokeMethod calls against one shared, cached ManagementObject
+        // already proven safe from 8 concurrent threads) -- each thread
+        // here clones its own parameter object (see CallMethodOn) so
+        // there's no shared-mutable-state race despite the shared cache.
+        Parallel.ForEach(ZoneMasks, kv =>
         {
+            (int zone, int mask) = (kv.Key, kv.Value);
             RgbColor c = _colors[zone];
             SendRgbKb(mask, c.R, c.G, c.B);
-        }
+        });
     }
 
     /// <summary>

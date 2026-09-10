@@ -42,11 +42,12 @@ control confirmed live for keyboard, lightbar, AND controller. The
 whole thing runs as a real ASP.NET Core service process (console-
 testable today, real OS service registration deferred to Phase 7)
 fronting an HTTP API. **What's left in Phase 6, per the user's own
-explicit next-up list**: the Lightbar window, the Controller Reactive
-window, and the Diagnostics window — "we are going to tackle [them]
-one at a time" starting next session. Not started at all: the
-installer (Phase 7) — explicitly deferred until Phase 6 (including
-these 3 windows) is fully done, not scheduled ahead of it. **Check
+explicit next-up list** (Lightbar → Controller Reactive → Diagnostics,
+one at a time): Lightbar and Controller Reactive are both **DONE** (see
+their own "Phase 6 continued" sections below) — **only the Diagnostics
+window remains**. Not started at all: the installer (Phase 7) —
+explicitly deferred until Phase 6 (including Diagnostics) is fully
+done, not scheduled ahead of it. **Check
 "Immediate live state" at the very end of this file for exactly what's
 running right now** — don't rely on any of the older Phase 5/6
 "immediate live state" language earlier in this file, only the
@@ -72,14 +73,15 @@ below for the full list):
 - [x] Windows Service wrapper (as an ASP.NET Core app, console-run so
       far — real OS service registration is Phase 7's job) — see
       "Phase 5" below
-- [~] WPF GUI — **main window is functionally and visually complete**:
-      live preview, presets (whole-card click-to-apply + delete),
-      quick effects, and all 3 tuning panels (Gradient/Reactive Typing/
-      Custom Key Colors), all live-tested and theme-polished to match
-      the Python GUI. NOT done: the Lightbar/Controller Reactive/
-      Diagnostics windows (all 3 currently `MessageBox` "coming soon"
-      placeholders) — see the newest "Phase 6 continued" section below
-      before starting any of them.
+- [~] WPF GUI — main window is functionally/visually complete (see
+      above). **Lightbar window — DONE** (one backlogged known issue,
+      see "Phase 6 continued: Lightbar window" below — do not attempt
+      to fix without new evidence). **Controller Reactive window —
+      DONE** (see "Phase 6 continued: Controller Reactive window"
+      below). **Only the Diagnostics window remains**, still a
+      `MessageBox` "coming soon" placeholder — see the settled decision
+      #11 design proposal above for its planned content (not locked in,
+      a menu to refine when actually started).
 - [ ] Installer
 
 **Scope reversal, 2026-09-09**: an earlier version of this document
@@ -1355,6 +1357,161 @@ Three small, unrelated requests handled together since they all touch
    only touchpad's oversized per-event deltas get tamed. User
    confirmation: "You got it right on the nose."
 
+## Phase 6 continued: Lightbar window (2026-09-10, fourth session)
+
+Built the Lightbar window (`LightbarWindow.xaml`/`.xaml.cs` +
+`.Presets.cs`/`.Reactive.cs` partials), the first of the 3 remaining
+Phase 6 windows the user explicitly asked to tackle one at a time
+(Lightbar → Controller Reactive → Diagnostics). Full parity with
+`gui/lightbar.html`: Static/Dynamic mode toggle, zone selector + color
+wheel (`ColorWheelPicker.cs`, a from-scratch HSV wheel since WPF has no
+`<input type="color">` equivalent) + value slider + RGB fields, saved
+swatches, presets (reusing `MainWindow`'s whole-card-click pattern),
+and the "Reactive (keyboard -> lightbar)" section. One visual
+simplification kept from the plan (disclosed to the user, not silently
+dropped): the CSS mask crossfade between the 3 illustration zones was
+replaced with a plain 3-way crop, no soft blend at the seams --
+everything else, including the actual recolored bar photo
+(`LightbarIllustration.cs`, live per-pixel HSV hue-rotation of
+`Assets/lightbar_bar.png`), is full parity.
+
+**New Service backend, since the reactive flash loop was explicitly
+NOT built in Phase 5**: `LightbarReactiveManager.cs` (a
+`BackgroundService`, ~12.5Hz tick matching `daemon/server.py`'s own
+`_REACTIVE_TICK`), a non-persisted `LightbarController.FlashZones()`
+passthrough, and 3 new endpoints (`GET/POST /lightbar/reactive`,
+`POST /lightbar/reactive/capture_zones`) ported from
+`daemon/server.py`'s equivalents. The migrated `lightbar_reactive.json`
+already had `Enabled: true` from the user's real Python-era config, so
+this started actively flashing the instant the loop existed --
+confirmed working, not a bug.
+
+**Two real WMI performance bugs found and fixed, both in
+`Lightbar.cs`, both via live measurement, not guessing**: (1)
+`FindInstance()` re-ran a full `ManagementObjectSearcher` WQL query on
+every single Set* call (5 of them per `FlashZones`), and
+`GetMethodParameters()` re-fetched the method's CIM schema every call
+too -- together these made a single `FlashZones()` call take
+83-102ms against an 80ms tick budget, so the reactive loop could
+never keep up with real typing. Fixed by caching the resolved
+`ManagementObject` instance and a per-method parameter template
+(cloned per call to stay safe once calls run concurrently -- see next
+item), dropping this to a consistent 60-69ms. (2) The 3 per-zone
+`SetGamingRgbKb` writes inside `FlashZones()` were sent sequentially,
+leaving a real ~25-30ms gap between when zone 1's color landed on the
+physical hardware and when zone 3's did -- now fired via
+`Parallel.ForEach`, confirmed safe by the same thread-affinity probe
+`LightbarDiagnostics` already proved months earlier in this project.
+
+**KNOWN UNRESOLVED ISSUE, explicitly backlogged, not fixed** -- the
+user's own words after testing both fixes live: "it still having
+issue trying to fire all three zones together... I don't want to be
+stuck in debugging hell right now," and explicitly asked to backlog
+this and move on rather than keep digging. **Symptom**: triggering an
+all-zone flash (keyboard zone 4) still shows zone 1 visibly out of
+sync with zones 2/3 on the real hardware, even after both perf fixes
+above (which did measurably help the *overall* lag, per the user's
+own earlier "little lag... always going to be" comment, but did NOT
+fix this specific desync). **Not yet investigated**: whether
+`Parallel.ForEach`'s thread-pool scheduling itself introduces enough
+jitter to explain a *specific, consistent* zone-1 lag (rather than
+random which-zone-lags-most behavior, which is what pure scheduling
+jitter would predict) -- if it's consistently zone 1 specifically,
+that points at something about zone 1's mask/position in the
+protocol rather than generic concurrency timing, and is worth
+re-examining with real evidence (e.g. per-zone timestamps around each
+`SendRgbKb` call) before trying another fix blind. **Do not re-attempt
+a fix without new evidence** -- two targeted fixes already landed
+here based on real measurement and neither fully solved it; a third
+guess without profiling first would repeat the exact mistake this
+project's own standing practice exists to avoid.
+
+### Controller Reactive window — DONE, same session
+
+Second of the 3 remaining windows. Simpler than Lightbar (no canvas
+widgets) -- ported from `gui/controller_reactive.html` as
+`ControllerReactiveWindow.xaml`/`.xaml.cs`: the master "Enabled"
+toggle (calls the existing Phase 5 `ControllerReactiveManager.Enable/
+Disable()`), Background enable+color, Left/Right Stick idle/tier1/
+tier2 swatches, a shared Deadzone slider, and 4 button-group panels
+(Face/D-Pad/Shoulders & Triggers/Paddles & Fn -- 16 individual button
+swatches total, built in code from a fixed `(key, label)` table per
+group, matching `gui/app.js`'s `buildGroupGrid`). Live-apply is
+debounced (150ms, matching the Python throttle) through the existing
+`POST /controller-reactive/settings`.
+
+**Two small Service additions, needed by this window and nothing
+before it** (per Phase 5's own "NOT built" list, which flagged these
+as deferred until a GUI needed them): `GET /controller-reactive/
+defaults` (the "Default" button's target values, mirroring
+`daemon/server.py`'s own endpoint -- built from `ControllerReactiveParams`'
+own record defaults rather than hardcoding a second copy of the
+numbers) and a `connected` field added to the existing `GET
+/controller-reactive/status` response (`Controller.IsConnected`,
+previously only `enabled` was reported). `Endpoints.MapControllerReactive`
+and `Program.cs`'s call site both took a new `Controller?` parameter
+for this.
+
+**Verified live**: settings load/save/live-apply, the Enable/Disable
+toggle taking over the keyboard, and the "Default" button all
+exercised against the real DualSense (connected via USB during this
+session -- `connected: true` confirmed via the new status field).
+
+### Window placement + owner-focus fixes — DONE, same session
+
+Two behavior bugs reported after opening/closing the new windows a
+few times, both fixed with new shared helpers rather than duplicated
+per-window:
+
+- **New windows opened partly off-screen**, needing a manual drag-up
+  and resize every time. `LightbarWindow`/`ControllerReactiveWindow`
+  both declare a fixed `Height="900"` in XAML, which can exceed a
+  shorter display's actual usable height -- `MainWindow`'s own
+  top-centered placement logic (added in an earlier session) didn't
+  clamp height at all, and the two new windows never had it applied.
+  Fixed with a new shared `WindowPlacement.PlaceTopCentered(Window)`
+  (`WindowPlacement.cs`) that clamps `Height` to
+  `SystemParameters.WorkArea.Height` (the real usable area, excluding
+  the taskbar -- `MainWindow`'s original version used
+  `SystemParameters.PrimaryScreenWidth`/a literal `Top = 0`, neither of
+  which account for the taskbar) before positioning. `MainWindow`
+  itself was retrofitted to call this too, replacing its own inline
+  version, so all 3 windows now share one implementation.
+- **Closing Lightbar/Controller Reactive dropped the main window
+  behind unrelated apps** (the user's own example: VS Code below Main
+  Window below Lightbar -- closing Lightbar left VS Code on top,
+  skipping over Main Window entirely). WPF does not automatically
+  reactivate a window's `Owner` when an owned window closes; without
+  an explicit `Activate()` call, the OS's next-focused window is
+  whatever was behind the closing window in the overall Z-order, which
+  isn't necessarily the owner. Fixed with
+  `WindowPlacement.ReactivateOwnerOnClose(Window)`, which just wires
+  `Closed += (_, _) => window.Owner?.Activate();` -- called once from
+  each owned window's constructor (`Owner` doesn't need to be set yet
+  at that point since the lambda reads it lazily at close-time, well
+  after the caller's `{ Owner = this }` object-initializer has run).
+
+### App icon + logo branding — DONE, same session
+
+User asked to incorporate the icons already made for the Python
+version (`gui/app_icon.ico`, `gui/logo.png`) rather than leave the WPF
+app with no branding. Copied both into
+`windows/src/JmaStudio.Gui/Assets/`, registered in the `.csproj` two
+ways: `<ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>` (embeds
+into the compiled `.exe`'s own Win32 resources -- shows in Explorer/
+taskbar/Alt-Tab even before any window opens) AND as a `<Resource>`
+item (so it's also loadable via `pack://application:,,,/Assets/
+app_icon.ico` for each `Window.Icon` -- a different embedding
+mechanism than `ApplicationIcon`, needed separately). All 3 windows'
+XAML root elements now set `Icon="pack://application:,,,/Assets/
+app_icon.ico"`. `MainWindow`'s topbar, which previously showed a plain
+`TextBlock Text="JMA Studio"`, now shows the actual `logo.png` image
+instead (matching `gui/index.html`'s own topbar, which has never had a
+separate text label next to its logo). Went through a few live
+size iterations with the user (28px → a combined logo+"Studio"-text
+version the user disliked and asked reverted → logo-only at 36px →
+final: **48px**, logo image alone, no adjacent text).
+
 ## Key technical decisions for the scaffold itself
 
 - **Target framework: `net8.0-windows`** across every project in the
@@ -1484,82 +1641,89 @@ Three small, unrelated requests handled together since they all touch
    rather than in Phase 4, since it depends on the enable/disable
    plumbing this phase provides — **DONE**, see "Phase 5" above
 6. WPF GUI: replicate existing UX, add Create Preset + dominance-
-   reassert button — **main window DONE** (live preview, presets, quick
-   effects, all 3 tuning panels, full theming, window behavior — see
-   "Phase 6" and both "Phase 6 continued" sections above). **Remaining**:
-   the Lightbar window, Controller Reactive window, and Diagnostics
-   window (currently `MessageBox` placeholders) — the user's explicit
-   next-up plan, one at a time. The "Create Preset" flow and the
-   Diagnostics dashboard's emergency-action row (dominance-reassert +
-   switch-to-Python/switch-to-C# buttons) described under settled
+   reassert button — **main window, Lightbar window, and Controller
+   Reactive window all DONE** (see "Phase 6" and all "Phase 6
+   continued" sections above). **Only the Diagnostics window remains**
+   (currently a `MessageBox` placeholder). The "Create Preset" flow and
+   the Diagnostics dashboard's emergency-action row (dominance-reassert
+   + switch-to-Python/switch-to-C# buttons) described under settled
    decision #11 are part of this remaining work, not yet built.
 7. Installer (location prompt, consent notice, service registration,
    GUI autostart, preset data migration) — **explicitly deferred until
-   Phase 6's 3 remaining windows are done**, not scheduled ahead of them
+   the Diagnostics window is done**, not scheduled ahead of it
    (the user asked directly whether installer or polish comes next;
    answer given and accepted: finish Phase 6 first so the installer
    ships something complete).
 
-## Immediate live state as of writing this (2026-09-10, end of third Phase 6 session)
+## Immediate live state as of writing this (2026-09-10, end of fourth Phase 6 session)
 
 **This section supersedes every "immediate live state" note above it in
 this file — only trust this one.**
 
 - **The C# `JmaStudio.Service` is running and is the one actually
   driving the user's real hardware right now** — elevated console
-  process, PID 10592 at the time of writing (find it fresh via
-  `Get-NetTCPConnection -LocalPort 8420`), started earlier this session
-  after the user asked to switch back from Python. Confirmed live via
-  `GET /status`: `keyboardConnected: true`, `currentEffect:
+  process, PID 15328 at the time of writing (find it fresh via
+  `Get-NetTCPConnection -LocalPort 8420`). Confirmed live via `GET
+  /status`: `keyboardConnected: true`, `controllerConnected: true` (a
+  real DualSense was connected via USB this session), `currentEffect:
   "typing_reactive"` with the real "Red Chase" preset's params —
-  correct, not a fallback state. `controllerConnected: false` at the
-  time of writing (the DualSense simply wasn't connected/powered on
-  during this session — not a bug, nothing to investigate).
-- **`JmaStudio.Gui` is NOT currently running** — the user closed the
-  window at some point after the last round of live-testing in this
-  session (touchpad scroll fix). This is expected/fine: the Service
-  owns the hardware independently of whether the GUI is open. To
-  relaunch it: `dotnet run --project src/JmaStudio.Gui` from `windows/`
-  (no elevation needed, single-instance-enforced now — see below).
-- **The Python stack is fully stopped** — was running at the start of
-  this session (the "JMA Studio Autostart" scheduled task had re-fired
-  after a reboot/re-login since the previous session), stopped
-  deliberately by identifying and killing its exact 4-process tree
-  (parent PowerShell → uvicorn launcher → uvicorn worker bound to 8420,
-  and separately tray.py → its own child) before starting the C#
-  service, per the same two-processes-fighting-over-hardware caution
-  used every other time this project has switched stacks.
-- **This session's work (3 tuning panels, full theming pass, window
-  behavior fixes — see "Phase 6 continued: tuning panels..." above) is
-  being committed at the end of this session**, per the user's explicit
-  request ("fully update the handoff... the commit everything"). Check
-  `git log` on `csharp-port` to confirm this actually happened rather
-  than trusting this note alone — this file could theoretically be read
-  before that commit lands. The 5 modified + 5 new files are listed at
-  the top of this session's `git status` output; no separate manual
-  list is maintained here since committing right after writing this
-  section makes one immediately redundant.
-- **The user is about to update the Claude Code extension in VS Code**
-  before continuing — if a fresh session picks this up, that update
-  already happened; no action needed regarding it.
-- **Explicit, settled next-up plan directly from the user**: "we are
-  going to tackle the lightbar, Reactive controller, and diagnostics
-  windows one at a time." Not "whichever seems easiest" or "figure out
-  a good order" — the order as stated is Lightbar, then Controller
-  Reactive, then Diagnostics, one at a time (build + verify live one
-  fully before starting the next, same standard this whole project has
-  held to throughout). Don't re-propose a different order without the
-  user raising it first.
-- **Start here next time, in this order**: (1) read this whole "Phase 6
-  continued: tuning panels..." section above before writing any new GUI
-  code — the `ColorSwatchButton`/`Debouncer`/`_uiReady`/
-  `_suppressLiveApply`/implicit-dark-control-style patterns established
-  there are meant to be reused for the 3 new windows, not reinvented;
-  (2) confirm current live state fresh (service/GUI/Python process
-  status, current effect) rather than trusting this note blindly, since
-  time may have passed; (3) start the Lightbar window — it's simplest
-  of the 3 (no new hardware-state concepts, the Service's
-  `/lightbar/*` endpoints are all already built per "Phase 5" above),
-  build it, verify it live against the real lightbar, get explicit user
-  confirmation, THEN move to Controller Reactive, THEN Diagnostics —
-  don't build more than one window ahead of live verification.
+  deliberately re-applied at the very end of this session after
+  Controller Reactive testing had left it enabled (disabled, then
+  "Red Chase" re-applied explicitly, both confirmed via `GET /status`).
+  Lightbar is on its reactive config's background color (a static
+  blue) since the keyboard→lightbar reactive loop is enabled from the
+  user's real migrated settings — correct/expected, not a leftover
+  test artifact to "fix."
+- **`JmaStudio.Gui` is NOT currently running** — the user closed it
+  themselves after confirming the final 48px logo sizing. To relaunch:
+  `dotnet run --project src/JmaStudio.Gui` from `windows/` (no
+  elevation needed, single-instance-enforced).
+- **The Python stack is fully stopped**, untouched since the previous
+  session's end.
+- **This session's work is being committed at the end of this
+  session**, per the user's explicit request ("update the handoff...
+  then commit and prepare for a manual compaction"). Check `git log`
+  on `csharp-port` to confirm this landed rather than trusting this
+  note alone. Files touched this session: `Lightbar.cs` (WMI perf
+  fixes), `LightbarController.cs`/`Endpoints.cs`/`Program.cs`/
+  `RequestModels.cs` (new lightbar-reactive + controller-reactive-
+  defaults endpoints), a new `LightbarReactiveManager.cs`, and on the
+  GUI side `ApiClient.cs`, `App.xaml` (icon/logo assets registered),
+  `MainWindow.xaml`/`.xaml.cs` (logo swap, `WindowPlacement` retrofit),
+  plus new files `ColorWheelPicker.cs`, `LightbarIllustration.cs`,
+  `LightbarWindow.xaml`/`.xaml.cs`/`.Presets.cs`/`.Reactive.cs`,
+  `ControllerReactiveWindow.xaml`/`.xaml.cs`, `ScrollBehavior.cs`
+  (extracted from `MainWindow`), `WindowPlacement.cs`, and
+  `Assets/app_icon.ico`/`Assets/logo.png`.
+- **Explicit, settled next-up plan, per the user's own original
+  ordering**: Lightbar (DONE) → Controller Reactive (DONE) →
+  **Diagnostics (not started — this is the only remaining Phase 6
+  window)**. After Diagnostics, the user's own stated plan is Phase 7
+  (installer), explicitly not before.
+- **One backlogged, NOT-fixed known issue** — see "Phase 6 continued:
+  Lightbar window" above in full before touching it: an all-zone
+  lightbar flash (keyboard zone 4) still shows zone 1 slightly out of
+  sync with zones 2/3 on real hardware. Two real perf fixes already
+  landed this session (WMI instance/parameter-template caching,
+  parallelized zone writes) and neither fully solved this specific
+  symptom (though the *overall* reactive lag they targeted is
+  confirmed fixed). **Do not attempt a third fix without new
+  measured evidence** — the user explicitly asked to stop debugging
+  this and move on, twice already re-litigating it would go against
+  that direct instruction.
+- **Start here next time, in this order**: (1) read the "Phase 6
+  continued: Lightbar window", "...Controller Reactive window", and
+  "...window placement + owner-focus fixes" sections above before
+  writing any new GUI code — the `ColorSwatchButton`/`Debouncer`/
+  `_uiReady`/`_suppressLiveApply`/implicit-dark-control-style/
+  `WindowPlacement` patterns are meant to be reused for the Diagnostics
+  window too, not reinvented; (2) confirm current live state fresh
+  (service/GUI/Python process status, current effect) rather than
+  trusting this note blindly, since time may have passed; (3) build
+  the Diagnostics window — settled decision #11 above has the full
+  design proposal (3 emergency buttons with UAC shields + install-
+  detection gating, plus a menu of additional dashboard content to
+  pick from), verify it live, get explicit user confirmation; (4) only
+  after Diagnostics is done and confirmed, move to Phase 7 (installer)
+  — don't jump ahead to it, and don't revisit the backlogged lightbar
+  zone-sync issue without the user raising it first.

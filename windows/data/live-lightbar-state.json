@@ -1,9 +1,9 @@
 {
-  "Mode": "Rainbow",
+  "Mode": "Neon",
   "ModeColor": {
-    "R": 255,
-    "G": 0,
-    "B": 0
+    "R": 0,
+    "G": 8,
+    "B": 255
   },
   "ModeSpeed": 5,
   "ZoneColors": null,

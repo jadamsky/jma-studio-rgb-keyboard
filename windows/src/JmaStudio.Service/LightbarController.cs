@@ -54,6 +54,16 @@ public sealed class LightbarController
         Persist();
     }
 
+    /// <summary>Deliberately NOT persisted, unlike every other mutating
+    /// method here -- this is the reactive keypress-flash loop's transient
+    /// per-frame write, not a "last commanded state" the user actually
+    /// asked for. Matches daemon/server.py's _lightbar_reactive_loop,
+    /// which calls Lightbar.flash_zones() directly with no persistence of
+    /// its own; persisting these would mean a service restart boots back
+    /// into whatever flash happened to be live at shutdown instead of the
+    /// real last-commanded color/mode.</summary>
+    public void FlashZones(IReadOnlyDictionary<int, RgbColor> targets) => Require().FlashZones(targets);
+
     public void ApplyState(LightbarState state)
     {
         Require().ApplyState(state);
