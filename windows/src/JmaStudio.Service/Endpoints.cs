@@ -54,6 +54,14 @@ public static class Endpoints
             return Results.Ok();
         });
 
+        app.MapPost("/effects/{name}/apply-default", (string name) =>
+        {
+            IEffect? effect = registry.TryGet(name);
+            if (effect is null) return Results.NotFound(new { error = $"unknown effect '{name}'" });
+            state.SetEffect(name, effect.DefaultParams);
+            return Results.Ok();
+        });
+
         app.MapGet("/presets", () => Results.Ok(store.KeyboardPresets.Load()));
 
         app.MapPost("/presets/save", (PresetSaveRequest req) =>
@@ -184,6 +192,29 @@ public static class Endpoints
             }
             store.AppConfig.Save(store.AppConfig.Load() with { LightbarDefaultPreset = req.Name });
             return Results.Ok();
+        });
+    }
+
+    /// <summary>Cell layout -- so the GUI (or any client) can lay out a
+    /// visual keyboard without needing its own filesystem access to
+    /// keymap.json. Mirrors daemon/server.py's own GET /layout shape.</summary>
+    public static void MapLayout(WebApplication app, string keymapPath)
+    {
+        app.MapGet("/layout", () =>
+        {
+            var positions = Layout.CellPositions(keymapPath);
+            var indexByName = Layout.NameToIndex(keymapPath);
+            var nameByIndex = indexByName.ToDictionary(kv => kv.Value, kv => kv.Key);
+            var cells = positions
+                .OrderBy(kv => kv.Key)
+                .Select(kv => new
+                {
+                    index = kv.Key,
+                    name = nameByIndex.GetValueOrDefault(kv.Key, ""),
+                    row = kv.Value.Row,
+                    col = kv.Value.Col,
+                });
+            return Results.Ok(new { cells, numCells = KeyboardConstants.NumCells });
         });
     }
 

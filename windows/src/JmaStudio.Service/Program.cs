@@ -31,6 +31,19 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.IncludeFields = true;
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    // ASP.NET Core's own minimal-API default is camelCase property
+    // names, which doesn't match PresetJsonOptions.Default (JmaStudio.
+    // Presets -- PascalCase, no naming policy, matching the on-disk
+    // preset files). The GUI client deserializes HTTP responses using
+    // THAT SAME PresetJsonOptions.Default for consistency, so the two
+    // layers need to agree -- null it out here rather than making the
+    // GUI carry a second, HTTP-specific JsonSerializerOptions. Hit this
+    // live: without this, every HTTP response silently deserialized to
+    // all-default/null property values (case-sensitive exact-name
+    // matching with no policy just skips every non-matching property),
+    // which surfaced downstream as a NullReferenceException instead of
+    // a clear deserialization error.
+    options.SerializerOptions.PropertyNamingPolicy = null;
 });
 
 // ---- data/config locations ---------------------------------------
@@ -99,6 +112,7 @@ var app = builder.Build();
 Endpoints.MapKeyboard(app, daemonState, effectRegistry, presetStore, keyboard, controller);
 Endpoints.MapLightbar(app, lightbarController, presetStore);
 Endpoints.MapControllerReactive(app, controllerReactiveManager, presetStore);
+Endpoints.MapLayout(app, keymapPath);
 
 // Loopback-only, same port the Python daemon used -- no auth either
 // way, trusted purely by being on 127.0.0.1, matching daemon/server.py.

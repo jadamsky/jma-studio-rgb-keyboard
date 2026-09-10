@@ -27,14 +27,16 @@ re-litigate those; they're final unless the user reopens them.
 
 ## Current status
 
-**Phases 1-5 (branch/scaffold + hardware protocol + effects + presets +
-service/controller-reactive) — DONE.** Real hardware control confirmed
-live for keyboard, lightbar, AND controller. The whole thing now runs
-as a real ASP.NET Core service process (console-testable today, real
-OS service registration deferred to Phase 7) fronting an HTTP API,
-with controller-reactive's full enable/disable/settings lifecycle
-verified end to end against the user's real DualSense and real saved
-colors. Not yet started: WPF GUI, installer (see "Suggested phasing").
+**Phases 1-5 — DONE. Phase 6 (WPF GUI) — IN PROGRESS, first slice
+working but with known performance/polish issues, see below.** Real
+hardware control confirmed live for keyboard, lightbar, AND controller.
+The whole thing runs as a real ASP.NET Core service process (console-
+testable today, real OS service registration deferred to Phase 7)
+fronting an HTTP API. A first-slice WPF `MainWindow` now talks to that
+API and shows a live keyboard preview, but the user's own live testing
+found it noticeably slower/choppier than the Python GUI and visually
+rougher — not yet fixed, see "Phase 6" below for specifics and
+hypotheses. Not yet started: installer (see "Suggested phasing").
 
 Phase progress (updated as each completes — see "Suggested phasing"
 below for the full list):
@@ -56,7 +58,14 @@ below for the full list):
 - [x] Windows Service wrapper (as an ASP.NET Core app, console-run so
       far — real OS service registration is Phase 7's job) — see
       "Phase 5" below
-- [ ] WPF GUI
+- [~] WPF GUI — **first slice only** (main window: live preview,
+      presets, quick effects). NOT done: Lightbar/Controller Reactive/
+      Diagnostics windows, the Gradient/Reactive Typing tuning panels,
+      the Custom Key Colors painter, AND the performance/visual issues
+      the user found in live testing need fixing before this is
+      actually good. See "Phase 6" below -- read it before continuing
+      this work, it's the freshest, most load-bearing section in this
+      file as of this session ending.
 - [ ] Installer
 
 **Scope reversal, 2026-09-09**: an earlier version of this document
@@ -763,6 +772,147 @@ forgotten):
   these for its GUI to build the color-picker grid dynamically) -- not
   needed until Phase 6 has a GUI that needs them.
 
+## Phase 6: WPF GUI — IN PROGRESS (2026-09-10)
+
+New `JmaStudio.Gui` project (WPF, net8.0-windows). **First slice only**
+— read "NOT done" below before assuming more exists than does.
+
+**What exists**:
+- `ApiClient.cs`: thin `HttpClient` wrapper over the Service's API,
+  reusing the exact same strongly-typed models (`EffectParams`,
+  `KeyboardPreset`, `LightbarState`, ...) via project references, and
+  `PresetJsonOptions.Default` (`JmaStudio.Presets`) for deserialization
+  — deliberately the SAME options object the Service uses for file
+  persistence, so there's one JSON convention to reason about, not two.
+- `MainWindow.xaml`/`.xaml.cs`: dark-themed shell replicating
+  `gui/index.html`'s top-level structure — top bar (hardware status
+  dot/label, Lightbar/Controller Reactive/Diagnostics/Off buttons),
+  live keyboard preview (a `Canvas` of one `Rectangle` per cell,
+  positioned via the new `GET /layout` endpoint — see below), a
+  Presets panel (apply/delete, each preset as a card), a Quick Effects
+  panel (one button per registered effect, applies with that effect's
+  own `DefaultParams`), and a footer (Save current as preset / Set as
+  startup default), all wired to the real API.
+- `NamePromptWindow.xaml`/`.xaml.cs`: a small modal for the one text
+  input WPF has no built-in equivalent for (the save-preset name
+  prompt) — matches `gui/index.html`'s own modal in spirit.
+- Two new Service endpoints added specifically to support the GUI
+  without giving it direct filesystem access: `GET /layout` (cell
+  index → name/row/col, mirrors `daemon/server.py`'s own `/layout`)
+  and `POST /effects/{name}/apply-default` (apply a registered effect
+  using its own `IEffect.DefaultParams`, for the Quick Effects grid,
+  which shouldn't need to know each effect's params shape just to
+  offer "try this effect").
+
+**Two real bugs found and fixed while wiring this up** (both are
+exactly the kind of thing that would have been very confusing to debug
+from inside a future GUI feature instead of this first, minimal
+connectivity test — this is why building the plumbing first and
+proving it end-to-end mattered):
+1. **`EffectParams` JSON discriminator had to be the first property or
+   deserialization failed outright.** `System.Text.Json`'s built-in
+   `[JsonPolymorphic]`/`[JsonDerivedType]` attributes read JSON as a
+   forward-only stream and require the `"$effect"` discriminator to
+   appear before any other property — a perfectly valid but
+   differently-ordered JSON object (e.g. `{"colors":...,"$effect":...}`
+   instead of `{"$effect":...,"colors":...}`) 500'd with a confusing
+   error naming the abstract `EffectParams` type itself. **Fixed**:
+   replaced with a custom `EffectParamsJsonConverter` (in
+   `JmaStudio.Effects`) that buffers the whole object
+   (`JsonDocument.ParseValue`) before reading any property, so field
+   order stops mattering for any client. Already committed
+   (`b667ac0`, before this GUI work).
+2. **HTTP JSON casing mismatch between the Service and the GUI.**
+   `PresetJsonOptions.Default` (designed for file persistence) has no
+   naming policy, so it round-trips named record types
+   (`KeyboardPreset`, `LightbarState`, ...) as PascalCase, matching
+   their real C# property names. But several `Endpoints.cs` handlers
+   (`/status`, `/frame`, `/lightbar/status`) return **anonymous C#
+   object literals with camelCase property names hardcoded directly in
+   the source** (e.g. `new { keyboardConnected = ... }`) — that's not
+   a naming-policy artifact, it's literally what those properties are
+   named, so setting `PropertyNamingPolicy = null` server-side (tried
+   first) did nothing for those endpoints. The real, robust fix: added
+   `PropertyNameCaseInsensitive = true` to `PresetJsonOptions.Default`
+   itself, since that's shared by both the file-persistence code and
+   the GUI's `ApiClient` — makes deserialization tolerant of casing
+   differences regardless of which shape a given endpoint happens to
+   use, rather than requiring every current and future endpoint to be
+   audited for consistent casing by hand. **Symptom before the fix was
+   confusing and worth remembering**: no exception, no error — every
+   mismatched property just silently stayed at its type's default
+   (frequently `null` for reference types), which only surfaced much
+   later as an unrelated-looking `NullReferenceException` deep in
+   `MainWindow.xaml.cs`. If a future symptom looks like "some API
+   response is silently all-default/null," suspect a casing (or other
+   silent-mismatch) issue before assuming the deserialized value is
+   simply absent.
+
+**Verified working (real hardware, this session)**: the GUI connects
+to the real Service, hardware status shows "connected," and the live
+keyboard preview canvas shows the user's REAL current colors (Red
+Chase's actual per-key blues/purples), confirmed by the user after
+both bugs above were found and fixed.
+
+**NOT yet verified** — only the passive display path (status + frame
+polling) was actually exercised. None of the interactive controls have
+been click-tested yet: Apply/Delete on a preset card, Save current as
+preset, Set as startup default, Off, or any Quick Effects button.
+Don't assume these work just because they compile and the passive
+path does.
+
+**Known issues from live user feedback, NOT fixed yet** — this is the
+most important unresolved item in this whole file as of this session
+ending:
+1. **Responsiveness/animation smoothness is noticeably worse than the
+   Python GUI** — the user's exact words: "the reaction time of the
+   keyboard is slow, and the animation is slow for reactive and
+   doesn't keep up the way the python version did." Prime suspects,
+   not yet investigated in code:
+   - `MainWindow.xaml.cs`'s poll loop (`_pollTimer.Interval =
+     TimeSpan.FromMilliseconds(150)`) refreshes the preview at ~6-7Hz,
+     far below the Service's actual 30fps render loop — for fast
+     effects (bolts, chases) this alone would look choppy regardless
+     of anything else.
+   - `PollAsync()` awaits `GetStatusAsync()` then `GetFrameAsync()`
+     **sequentially**, not concurrently (`Task.WhenAll`) — doubles the
+     round-trip latency per tick for no reason, since the two calls
+     are independent.
+   - `GetStatusAsync()` re-fetches and re-deserializes the ENTIRE
+     current effect's params on every single poll tick, including
+     potentially large ones (`typing_reactive` wrapping `custom_keys`'s
+     100+-entry color dictionary, for example) — the preview loop only
+     actually needs `/frame`; `/status` (for the current-effect label
+     and connection dot) could poll far less often, or the Service
+     could expose a lighter-weight "just the essentials" status shape.
+   - Not yet profiled which of these actually dominates — don't assume
+     the fix is "just raise the polling rate" without checking; a
+     naive higher-frequency poll that still does two sequential full
+     HTTP+JSON round trips per tick might not actually get close to
+     30fps.
+2. **Visual polish is well below the Python GUI**: the user's exact
+   words: "the keyboard doesn't look nearly as nice as the python
+   version." The current preview is a plain black `Canvas` with
+   generically-sized (20×20, 3px corner radius) rectangles and a flat
+   3px gap — no attempt yet to match `gui/style.css`'s actual keyboard
+   styling (key proportions, real stagger fidelity beyond raw
+   row/col numbers, any depth/glow/shadow treatment, key labels).
+   Compare directly against `gui/style.css` + `gui/app.js`'s keyboard-
+   building code on `main` when picking this up again — this was
+   built as a functional first pass, explicitly not a design pass.
+
+**NOT built at all yet** (not forgotten, explicitly deferred to keep
+this first slice small enough to actually verify end-to-end):
+- Lightbar window, Controller Reactive window, and Diagnostics window
+  — all three are currently `MessageBox` "coming soon" placeholders in
+  `MainWindow.xaml.cs`.
+- The Gradient panel, Reactive Typing panel, and Custom Key Colors
+  painter from `gui/index.html` — the per-effect tuning UI. Quick
+  Effects only applies each effect's bare defaults right now.
+- The Diagnostics window design captured earlier in this file (the 3
+  emergency buttons with UAC shields + install-detection gating, plus
+  the broader dashboard proposal) — none of it is built, only planned.
+
 ## Key technical decisions for the scaffold itself
 
 - **Target framework: `net8.0-windows`** across every project in the
@@ -863,6 +1013,10 @@ forgotten):
   `... -- preset-demo <name> [seconds] [--out-dir path] [--keymap path]`
   (no elevation), `... -- lightbar-preset-demo <name> [--out-dir path]`
   (**requires Administrator**).
+- **Run the GUI** (from `windows/`, no elevation needed — it never
+  touches hardware directly, only the Service's HTTP API):
+  `dotnet run --project src/JmaStudio.Gui`. **The Service must already
+  be running** (see above) or it'll show "service unreachable."
 
 ## Suggested phasing (from the planning conversation)
 
@@ -888,36 +1042,52 @@ forgotten):
    rather than in Phase 4, since it depends on the enable/disable
    plumbing this phase provides — **DONE**, see "Phase 5" above
 6. WPF GUI: replicate existing UX, add Create Preset + dominance-
-   reassert button
+   reassert button — **IN PROGRESS, first slice only**, see "Phase 6"
+   above for exactly what exists, what's verified, and (important)
+   the unfixed performance/polish issues from live user testing
 7. Installer (location prompt, consent notice, service registration,
    GUI autostart, preset data migration)
 
-## Immediate live state as of writing this (2026-09-09, end of Phase 5 session)
+## Immediate live state as of writing this (2026-09-10, end of Phase 6 session)
 
 - **The C# `JmaStudio.Service` is the process actually driving the
   user's real hardware right now** -- running as a plain elevated
   console process (`dotnet run --project src/JmaStudio.Service`, not an
-  installed OS service), started via an elevated wrapper script, PID
-  not worth recording here since it'll be gone by the next session
-  either way (find it via `Get-NetTCPConnection -LocalPort 8420`).
-- **The Python daemon is stopped** and has NOT been restarted since
-  partway through Phase 5 (stopped deliberately to avoid the two-
-  processes-fighting-over-hardware problem this session hit once
-  already). Its tray icon and any GUI window may or may not still be
-  open -- check before assuming either way, and never blindly kill
-  python.exe processes (see `main`'s own HANDOFF.md for why).
+  installed OS service), started via an elevated wrapper script. PID
+  not worth recording (find it via
+  `Get-NetTCPConnection -LocalPort 8420`).
+- **`JmaStudio.Gui` (the new WPF app) is ALSO currently running**,
+  connected to that Service, showing the live keyboard preview. Find
+  it via `Get-Process -Name JmaStudio.Gui`. It's the first-slice build
+  described in "Phase 6" above -- functional for passive viewing,
+  interactive buttons unverified, known perf/polish issues unfixed.
+- **The Python daemon is stopped** and has not been restarted since
+  Phase 5 (stopped deliberately to avoid the two-processes-fighting-
+  over-hardware problem this session hit once already, on the keyboard
+  side specifically, but the same risk applies to the Service too).
+  Its tray icon and any GUI window may or may not still be open --
+  check before assuming either way, and never blindly kill python.exe
+  processes (see `main`'s own HANDOFF.md for why).
 - Current confirmed-good live state: keyboard on `typing_reactive`
-  ("Red Chase"), lightbar on the `Rainbow` animated mode -- both the
-  user's real configured defaults, deliberately restored to this state
-  at the end of the session per the user's own request.
-- `windows/data/*.json` holds real migrated user data, including (as of
-  this session) real controller-reactive settings pulled from
-  `controller_reactive.json` for the first time.
-- Nothing from this Phase 5 session has been committed to git yet as
-  of this writing -- `git status` on `csharp-port` will show the new
-  `JmaStudio.Service` project plus modifications to `JmaStudio.Effects`/
-  `JmaStudio.Hardware`/`JmaStudio.Presets` for controller-reactive
-  support.
-- If picking this up fresh: decide whether to restart the Python daemon
-  (giving the user their pre-this-session setup back exactly) or keep
-  testing against the C# service -- don't assume either way, ask.
+  ("Red Chase") -- the user's real configured default. Lightbar state
+  wasn't explicitly re-checked at the very end of this session; verify
+  it before assuming it's still on `Rainbow`.
+- `windows/data/*.json` holds real migrated user data, unchanged since
+  Phase 5's end.
+- **This session's work (the whole `JmaStudio.Gui` project, the two
+  JSON bugs, the new `/layout`/`/effects/{name}/apply-default`
+  endpoints, this HANDOFF.md update) is being committed at the end of
+  this session**, per the user's own request -- check `git log` on
+  `csharp-port` to confirm that actually happened rather than assuming
+  it from this note alone (this file could theoretically be read
+  before that commit lands).
+- **Start here next time, in this order**: (1) read the "Phase 6"
+  section above in full before writing any GUI code, (2) decide how to
+  actually investigate the performance complaint (profile first, don't
+  guess-and-check blindly -- the three hypotheses listed are a starting
+  point, not a confirmed diagnosis), (3) only then consider visual
+  polish or the remaining windows/panels, since a prettier UI that's
+  still laggy doesn't address the user's main complaint.
+- If picking this up fresh and unsure whether to keep testing against
+  the C# stack or fall back to the Python daemon: don't assume either
+  way, ask.

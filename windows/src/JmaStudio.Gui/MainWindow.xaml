@@ -1,0 +1,131 @@
+<Window x:Class="JmaStudio.Gui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:JmaStudio.Gui"
+        mc:Ignorable="d"
+        Title="JMA Studio" Height="820" Width="1180"
+        Background="#1A1A1E" Foreground="#EDEDED"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <SolidColorBrush x:Key="PanelBrush" Color="#242429"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#5B8CFF"/>
+        <SolidColorBrush x:Key="GhostBrush" Color="#33333A"/>
+        <SolidColorBrush x:Key="SubTextBrush" Color="#9A9AA5"/>
+
+        <Style x:Key="BtnGhost" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource GhostBrush}"/>
+            <Setter Property="Foreground" Value="#EDEDED"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Margin" Value="4,0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style x:Key="BtnAccent" TargetType="Button" BasedOn="{StaticResource BtnGhost}">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="PanelHeader">
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style TargetType="Border" x:Key="Panel">
+            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="Margin" Value="0,0,0,16"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel LastChildFill="True">
+
+        <!-- Top bar -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" Padding="16,10">
+            <DockPanel>
+                <TextBlock Text="JMA Studio" FontSize="18" FontWeight="Bold" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" DockPanel.Dock="Right">
+                    <Ellipse x:Name="HwStatusDot" Width="10" Height="10" Fill="Gray" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="HwStatusLabel" Text="checking..." VerticalAlignment="Center" Margin="0,0,16,0" Foreground="{StaticResource SubTextBrush}"/>
+                    <Button x:Name="LightbarBtn" Content="Lightbar" Style="{StaticResource BtnGhost}" Click="LightbarBtn_Click"/>
+                    <Button x:Name="ControllerReactiveBtn" Content="Controller Reactive" Style="{StaticResource BtnGhost}" Click="ControllerReactiveBtn_Click"/>
+                    <Button x:Name="DiagnosticsBtn" Content="Diagnostics" Style="{StaticResource BtnGhost}" Click="DiagnosticsBtn_Click"/>
+                    <Button x:Name="OffBtn" Content="Off" Style="{StaticResource BtnGhost}" Click="OffBtn_Click"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Footer -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" Padding="16,10">
+            <DockPanel>
+                <Button x:Name="SavePresetBtn" Content="Save current as preset" Style="{StaticResource BtnAccent}" Click="SavePresetBtn_Click"/>
+                <Button x:Name="SetDefaultBtn" Content="Set as startup default" Style="{StaticResource BtnGhost}" Click="SetDefaultBtn_Click"/>
+                <TextBlock x:Name="ToastText" Foreground="{StaticResource SubTextBrush}" VerticalAlignment="Center" Margin="16,0,0,0" DockPanel.Dock="Right" HorizontalAlignment="Right"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Main content -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+            <StackPanel>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Live Preview" Style="{StaticResource PanelHeader}"/>
+                            <TextBlock x:Name="CurrentEffectLabel" Text="--" Foreground="{StaticResource SubTextBrush}" HorizontalAlignment="Right"/>
+                        </DockPanel>
+                        <Border Background="#101013" CornerRadius="6" Padding="10">
+                            <Canvas x:Name="KeyboardCanvas" Height="220"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="Presets" Style="{StaticResource PanelHeader}"/>
+                        <ItemsControl x:Name="PresetsList">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{StaticResource GhostBrush}" CornerRadius="6" Margin="0,0,8,8" Padding="10,6">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                            <Button Content="Apply" Padding="6,2" Margin="0,0,4,0" Click="ApplyPreset_Click" Tag="{Binding Name}"/>
+                                            <Button Content="✕" Padding="6,2" Click="DeletePreset_Click" Tag="{Binding Name}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="Quick Effects" Style="{StaticResource PanelHeader}"/>
+                        <ItemsControl x:Name="EffectsList">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Content="{Binding}" Style="{StaticResource BtnGhost}" Margin="0,0,8,8" Padding="12,8" Click="QuickEffect_Click" Tag="{Binding}"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+    </DockPanel>
+</Window>
