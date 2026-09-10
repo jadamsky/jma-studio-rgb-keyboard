@@ -6,37 +6,309 @@
         xmlns:local="clr-namespace:JmaStudio.Gui"
         mc:Ignorable="d"
         Title="JMA Studio" Height="820" Width="1180"
-        Background="#1A1A1E" Foreground="#EDEDED"
+        Background="#0B0B12" Foreground="#EAEAF2"
         FontFamily="Segoe UI">
     <Window.Resources>
-        <SolidColorBrush x:Key="PanelBrush" Color="#242429"/>
-        <SolidColorBrush x:Key="AccentBrush" Color="#5B8CFF"/>
-        <SolidColorBrush x:Key="GhostBrush" Color="#33333A"/>
-        <SolidColorBrush x:Key="SubTextBrush" Color="#9A9AA5"/>
+        <!-- Palette matches gui/style.css's :root variables as closely as
+             WPF's control model allows. This whole resource dictionary
+             replaces the earlier first-slice one (flat colors, no custom
+             control templates), which left every Slider/ComboBox/preset
+             card button rendering as plain unstyled system chrome (a
+             light-grey popup with black text, blocky sliders, default
+             grey buttons) against this dark theme. -->
+        <SolidColorBrush x:Key="BgBrush" Color="#0B0B12"/>
+        <SolidColorBrush x:Key="PanelBrush" Color="#15151F"/>
+        <SolidColorBrush x:Key="PanelBorderBrush" Color="#1FFFFFFF"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#EAEAF2"/>
+        <SolidColorBrush x:Key="SubTextBrush" Color="#9A9AAB"/>
+        <SolidColorBrush x:Key="CardBrush" Color="#1A1A26"/>
+        <SolidColorBrush x:Key="GhostBrush" Color="#1A1A26"/>
+        <SolidColorBrush x:Key="AccentABrush" Color="#4F7BFF"/>
+        <SolidColorBrush x:Key="AccentBBrush" Color="#B544E8"/>
+        <SolidColorBrush x:Key="AccentCBrush" Color="#FF3FA4"/>
+        <SolidColorBrush x:Key="SuccessBrush" Color="#3DDC84"/>
+        <SolidColorBrush x:Key="DangerBrush" Color="#FF5470"/>
+        <SolidColorBrush x:Key="TrackBrush" Color="#14FFFFFF"/>
+        <SolidColorBrush x:Key="HoverOverlayBrush" Color="#17FFFFFF"/>
+        <LinearGradientBrush x:Key="AccentGradBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#4F7BFF" Offset="0"/>
+            <GradientStop Color="#B544E8" Offset="0.55"/>
+            <GradientStop Color="#FF3FA4" Offset="1"/>
+        </LinearGradientBrush>
 
+        <!-- Buttons: rounded, hover accent border. BtnAccent additionally
+             fills with the brand gradient (matches gui/style.css's
+             .btn-accent). Used everywhere a Button appears in this window
+             except the preset delete circle and quick-effect chips (their
+             own dedicated styles below). -->
         <Style x:Key="BtnGhost" TargetType="Button">
             <Setter Property="Background" Value="{StaticResource GhostBrush}"/>
-            <Setter Property="Foreground" Value="#EDEDED"/>
-            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Padding" Value="14,8"/>
             <Setter Property="Margin" Value="4,0"/>
-            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}"/>
+            <Setter Property="FontSize" Value="13"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentABrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style x:Key="BtnAccent" TargetType="Button" BasedOn="{StaticResource BtnGhost}">
-            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Background" Value="{StaticResource AccentGradBrush}"/>
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="0"/>
         </Style>
+
         <Style TargetType="TextBlock" x:Key="PanelHeader">
-            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontSize" Value="13"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="Foreground" Value="{StaticResource SubTextBrush}"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
         </Style>
         <Style TargetType="Border" x:Key="Panel">
             <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-            <Setter Property="CornerRadius" Value="8"/>
-            <Setter Property="Padding" Value="16"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="14"/>
+            <Setter Property="Padding" Value="18,16"/>
             <Setter Property="Margin" Value="0,0,0,16"/>
+        </Style>
+
+        <!-- Preset cards: the whole card is clickable (applies the preset),
+             matching gui/style.css/app.js exactly, there's no separate
+             "Apply" button. Only the small circular "x" in the corner has
+             its own click target (a real Button, so its Click marks the
+             underlying mouse-up handled before it bubbles to the card's
+             own MouseLeftButtonUp, which is what keeps clicking delete
+             from also applying the preset, no manual "did they click the
+             delete button" check needed). -->
+        <Style x:Key="PresetCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,10,10"/>
+            <Setter Property="MinWidth" Value="150"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="PresetDeleteButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Background" Value="{StaticResource TrackBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource SubTextBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="10">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{StaticResource DangerBrush}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Sliders: gui/style.css's range inputs use a single flat thin
+             track (no two-tone filled/unfilled split) with all the visual
+             interest on the thumb: a gradient-filled circle with a soft
+             glow and a dark ring border. Implicit (no x:Key), so every
+             Slider in the window, including the ones built dynamically
+             in code for the Gradient panel's per-zone boundaries, picks
+             this up automatically. -->
+        <Style x:Key="SliderRepeatButtonTrack" TargetType="RepeatButton">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Height="6" CornerRadius="3" Background="{StaticResource TrackBrush}"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SliderThumbStyle" TargetType="Thumb">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Ellipse Width="16" Height="16" Fill="{StaticResource AccentGradBrush}" Stroke="{StaticResource BgBrush}" StrokeThickness="2">
+                            <Ellipse.Effect>
+                                <DropShadowEffect Color="#B544E8" BlurRadius="10" ShadowDepth="0" Opacity="0.65"/>
+                            </Ellipse.Effect>
+                        </Ellipse>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Slider">
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid VerticalAlignment="Center">
+                            <Track x:Name="PART_Track">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource SliderRepeatButtonTrack}" Command="Slider.DecreaseLarge"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource SliderRepeatButtonTrack}" Command="Slider.IncreaseLarge"/>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource SliderThumbStyle}"/>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- CheckBox: WPF's default template doesn't reliably inherit the
+             window's Foreground for its label text, it rendered as
+             near-black regardless of theme, the other half of the "black
+             text on grey" report (the ComboBox popup below was the other
+             half). Re-templated with an explicit accent-colored check
+             glyph, matching gui/style.css's checkbox accent-color. -->
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}">
+                            <Border x:Name="Box" Width="16" Height="16" CornerRadius="4" BorderBrush="{StaticResource PanelBorderBrush}"
+                                    BorderThickness="1.5" Background="{StaticResource CardBrush}" VerticalAlignment="Center">
+                                <Path x:Name="CheckMark" Data="M1,4 L4,7 L9,1" Stroke="White" StrokeThickness="1.8"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Visibility="Collapsed"/>
+                            </Border>
+                            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Box" Property="Background" Value="{StaticResource AccentGradBrush}"/>
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBBrush}"/>
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ComboBox: WPF's default template pops up a plain white/light
+             list with black text regardless of the app's own theme,
+             exactly the "black text on grey" the user was pointing at.
+             Implicit, so this covers every combo (zone count, bolt
+             shape/style) without per-instance styling. -->
+        <Style x:Key="ComboBoxToggleButtonStyle" TargetType="ToggleButton">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="ClickMode" Value="Press"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="22"/>
+                                </Grid.ColumnDefinitions>
+                                <Path Grid.Column="1" Data="M0,0 L4,4 L8,0" Stroke="{StaticResource SubTextBrush}" StrokeThickness="1.6"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Bd" Background="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverOverlayBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentBBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="ToggleBtn" Style="{StaticResource ComboBoxToggleButtonStyle}"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <ContentPresenter x:Name="ContentSite" IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              Margin="{TemplateBinding Padding}"
+                                              VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                            <Popup x:Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="240" Margin="0,4,0,0">
+                                    <ScrollViewer Margin="2" SnapsToDevicePixels="True">
+                                        <StackPanel IsItemsHost="True"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
@@ -67,7 +339,7 @@
         </Border>
 
         <!-- Main content -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <ScrollViewer x:Name="MainScrollViewer" VerticalScrollBarVisibility="Auto" Padding="16" PreviewMouseWheel="MainScrollViewer_PreviewMouseWheel">
             <StackPanel>
 
                 <Border Style="{StaticResource Panel}">
@@ -93,12 +365,15 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Background="{StaticResource GhostBrush}" CornerRadius="6" Margin="0,0,8,8" Padding="10,6">
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                                            <Button Content="Apply" Padding="6,2" Margin="0,0,4,0" Click="ApplyPreset_Click" Tag="{Binding Name}"/>
-                                            <Button Content="✕" Padding="6,2" Click="DeletePreset_Click" Tag="{Binding Name}"/>
-                                        </StackPanel>
+                                    <Border Style="{StaticResource PresetCardStyle}" Tag="{Binding Name}" MouseLeftButtonUp="PresetCard_Click">
+                                        <Grid>
+                                            <StackPanel Margin="14,12">
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" TextWrapping="Wrap" Margin="0,0,20,0"/>
+                                                <TextBlock Text="{Binding Effect}" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                            <Button Content="&#x2715;" Style="{StaticResource PresetDeleteButtonStyle}" Click="DeletePreset_Click" Tag="{Binding Name}"
+                                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0"/>
+                                        </Grid>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
@@ -121,6 +396,156 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Gradient tuning, ported from gui/index.html's "Gradient"
+                     panel. Zone count/brightness are fixed controls; the
+                     per-zone color/boundary rows are variable-count so
+                     they're built in code (MainWindow.Gradient.cs) into
+                     GradientColorsPanel/GradientBoundariesPanel. -->
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Gradient" Style="{StaticResource PanelHeader}"/>
+                            <CheckBox x:Name="GradientLiveCheck" Content="Apply live" IsChecked="True" HorizontalAlignment="Right" Foreground="{StaticResource SubTextBrush}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                            <TextBlock Text="Zones" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource SubTextBrush}"/>
+                            <ComboBox x:Name="GradientZoneCountCombo" Width="56" SelectionChanged="GradientZoneCountCombo_SelectionChanged">
+                                <ComboBoxItem Content="2"/>
+                                <ComboBoxItem Content="3"/>
+                                <ComboBoxItem Content="4"/>
+                                <ComboBoxItem Content="5"/>
+                            </ComboBox>
+                            <TextBlock Text="Brightness" VerticalAlignment="Center" Margin="24,0,8,0" Foreground="{StaticResource SubTextBrush}"/>
+                            <Slider x:Name="GradientBrightnessSlider" Width="160" Minimum="0" Maximum="1" ValueChanged="GradientBrightnessSlider_ValueChanged" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="GradientBrightnessLabel" Text="65%" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="{StaticResource SubTextBrush}" Width="36"/>
+                        </StackPanel>
+                        <WrapPanel x:Name="GradientColorsPanel" Margin="0,0,0,12"/>
+                        <WrapPanel x:Name="GradientBoundariesPanel"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Reactive Typing tuning, ported from gui/index.html's
+                     "Reactive Typing" panel. All controls are fixed/known,
+                     so they're declared here directly (see
+                     MainWindow.TypingReactive.cs for the logic). -->
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Reactive Typing" Style="{StaticResource PanelHeader}"/>
+                            <CheckBox x:Name="TrLiveCheck" Content="Apply live" IsChecked="True" HorizontalAlignment="Right" Foreground="{StaticResource SubTextBrush}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <WrapPanel Margin="0,0,0,12">
+                            <!-- IsChecked is set in code (InitializeTypingReactivePanel), not
+                                 here: setting it to a non-default value as a XAML attribute on
+                                 a control with Checked/Unchecked handlers wired in this same
+                                 file fires those handlers mid-parse, before later-declared named
+                                 elements (e.g. TrStyleCombo) are assigned yet, which crashed
+                                 with a NullReferenceException from inside
+                                 UpdateTypingReactiveLabels() the first time this was tried. -->
+                            <CheckBox x:Name="TrEnabledCheck" Content="Enable typing-reactive chase" Margin="0,0,20,8" Checked="TrOption_Changed" Unchecked="TrOption_Changed"/>
+                            <CheckBox x:Name="TrBoltResetCheck" Content="Bolt Reset" Margin="0,0,20,8" Checked="TrOption_Changed" Unchecked="TrOption_Changed"/>
+                            <CheckBox x:Name="TrUseGradientCheck" Content="Use Gradient as background" Margin="0,0,20,8" Checked="TrUseGradientCheck_Changed" Unchecked="TrUseGradientCheck_Changed"/>
+                            <CheckBox x:Name="TrUseCustomKeysCheck" Content="Use Custom Key Colors as background" Margin="0,0,20,8" Checked="TrUseCustomKeysCheck_Changed" Unchecked="TrUseCustomKeysCheck_Changed"/>
+                        </WrapPanel>
+                        <StackPanel x:Name="TrBaseColorRow" Orientation="Horizontal" Margin="0,0,0,12" Visibility="Collapsed">
+                            <TextBlock Text="Base color" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource SubTextBrush}"/>
+                            <local:ColorSwatchButton x:Name="TrBaseSwatch"/>
+                        </StackPanel>
+                        <!-- Mirrors gui/style.css's #tr-reactive-fields wrapper: all
+                             bolt-tuning controls hide together when the chase itself
+                             is disabled, since they're meaningless for a bare
+                             gradient/custom-keys/static background. -->
+                        <StackPanel x:Name="TrReactiveFieldsPanel">
+                            <WrapPanel Margin="0,0,0,12">
+                                <StackPanel Margin="0,0,24,0">
+                                    <TextBlock Text="Bright / bolt color" Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,4"/>
+                                    <local:ColorSwatchButton x:Name="TrBrightSwatch"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,24,0">
+                                    <TextBlock Text="Bolt shape" Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="TrShapeCombo" Width="140" SelectionChanged="TrOption_SelectionChanged">
+                                        <ComboBoxItem Content="Rays (8-point star)" Tag="Rays"/>
+                                        <ComboBoxItem Content="Radial (true ring)" Tag="Radial"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="Bolt style" Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="TrStyleCombo" Width="120" SelectionChanged="TrStyleCombo_SelectionChanged">
+                                        <ComboBoxItem Content="Solid" Tag="Solid"/>
+                                        <ComboBoxItem Content="Rainbow puke" Tag="Rainbow"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </WrapPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Flash decay (s)"/> <Run x:Name="TrDecayLabel" Text="0.6s"/>
+                                </TextBlock>
+                                <Slider x:Name="TrDecaySlider" Minimum="0.1" Maximum="2" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Bolt speed"/> <Run x:Name="TrSpeedLabel" Text="12"/>
+                                </TextBlock>
+                                <Slider x:Name="TrSpeedSlider" Minimum="2" Maximum="30" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Bolt tail length"/> <Run x:Name="TrTailLabel" Text="3"/>
+                                </TextBlock>
+                                <Slider x:Name="TrTailSlider" Minimum="0.5" Maximum="10" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Bloom max distance"/> <Run x:Name="TrMaxDistLabel" Text="18.5"/>
+                                </TextBlock>
+                                <Slider x:Name="TrMaxDistSlider" Minimum="0" Maximum="18.5" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel x:Name="TrFlickerRow" Visibility="Collapsed">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Rainbow flicker speed"/> <Run x:Name="TrFlickerLabel" Text="6"/>
+                                </TextBlock>
+                                <Slider x:Name="TrFlickerSlider" Minimum="1" Maximum="20" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Custom Key Colors painter, ported from gui/index.html's
+                     "Custom Key Colors" panel. The per-key grid is built in
+                     code (MainWindow.CustomKeys.cs), same pattern as the
+                     live-preview keyboard but with click-to-select instead
+                     of just color polling. -->
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Custom Key Colors" Style="{StaticResource PanelHeader}"/>
+                            <CheckBox x:Name="CkLiveCheck" Content="Apply live" IsChecked="True" HorizontalAlignment="Right" Foreground="{StaticResource SubTextBrush}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <WrapPanel Margin="0,0,0,10">
+                            <TextBlock x:Name="CkSelectionLabel" Text="No keys selected -- click a key to select it (shift-click to add more)" VerticalAlignment="Center" Foreground="{StaticResource SubTextBrush}" Margin="0,0,16,8"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,16,8">
+                                <TextBlock Text="Default" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{StaticResource SubTextBrush}"/>
+                                <local:ColorSwatchButton x:Name="CkDefaultSwatch"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,16,8">
+                                <TextBlock Text="Paint" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{StaticResource SubTextBrush}"/>
+                                <local:ColorSwatchButton x:Name="CkPaintSwatch"/>
+                            </StackPanel>
+                            <Button Content="Select all" Style="{StaticResource BtnGhost}" Click="CkSelectAll_Click" Margin="0,0,4,8"/>
+                            <Button Content="Deselect" Style="{StaticResource BtnGhost}" Click="CkSelectNone_Click" Margin="0,0,4,8"/>
+                            <Button Content="Reset selected" Style="{StaticResource BtnGhost}" Click="CkResetSelected_Click" Margin="0,0,4,8"/>
+                            <Button Content="Clear all" Style="{StaticResource BtnGhost}" Click="CkClearAll_Click" Margin="0,0,4,8"/>
+                            <Button Content="Pull current colors" Style="{StaticResource BtnAccent}" Click="CkPullCurrent_Click" Margin="0,0,0,8"/>
+                        </WrapPanel>
+                        <WrapPanel x:Name="CkRecentColorsPanel" Margin="0,0,0,10">
+                            <TextBlock x:Name="CkRecentEmptyLabel" Text="Recently used: none yet" Foreground="{StaticResource SubTextBrush}" FontSize="11" VerticalAlignment="Center"/>
+                        </WrapPanel>
+                        <Border x:Name="CkPreviewBoardHost" Background="#101013" CornerRadius="6" Padding="10" SizeChanged="CkPreviewBoardHost_SizeChanged">
+                            <Canvas x:Name="CkKeyboardCanvas" HorizontalAlignment="Center"/>
+                        </Border>
                     </StackPanel>
                 </Border>
 

@@ -27,24 +27,30 @@ re-litigate those; they're final unless the user reopens them.
 
 ## Current status
 
-**Phases 1-5 — DONE. Phase 6 (WPF GUI) — IN PROGRESS**, further along
-than the first-slice snapshot below: the responsiveness complaint is
-fixed and verified better by the user, the keyboard preview now matches
-the Python GUI's real key layout/stagger/labels, and three real bugs
-found via live testing tonight are fixed (two GUI-side, one now has
-permanent server-side logging so a fourth won't be a mystery). **Read
-"Phase 6 continued" (below the original "Phase 6" section) before doing
-any more GUI work — it documents all of tonight's fixes and, critically,
-lists 4 uncommitted files this repo currently has on disk.** Real
-hardware control confirmed live for keyboard, lightbar, AND controller.
-The whole thing runs as a real ASP.NET Core service process (console-
+**Phases 1-5 — DONE. Phase 6 (WPF GUI) — functionally complete except
+3 remaining windows.** Read "Phase 6 continued" and, more importantly,
+**"Phase 6 continued: tuning panels + full theming pass + window
+behavior (2026-09-10, third session)"** (the newest section, right
+before "Key technical decisions") before doing any more GUI work — it
+covers the Gradient/Reactive Typing/Custom Key Colors panels (the last
+missing pieces of parity with the Python GUI), a full visual theming
+pass (the user's own words: "nothing feels polished" → after the pass,
+"looks good now" / confirmed the sliders, presets, checkboxes, and
+combos all fixed one by one), top-centered window placement, single-
+instance enforcement, and a touchpad-scroll-speed fix. Real hardware
+control confirmed live for keyboard, lightbar, AND controller. The
+whole thing runs as a real ASP.NET Core service process (console-
 testable today, real OS service registration deferred to Phase 7)
-fronting an HTTP API. Not yet started: installer (see "Suggested
-phasing"). **As of the end of tonight's session, the C# stack is fully
-stopped and the Python stack is running instead** — see "Immediate live
-state" at the very end of this file, which has been fully rewritten for
-tonight's end state; don't rely on the older Phase 5/6 "immediate live
-state" language above it, only the final section is current.
+fronting an HTTP API. **What's left in Phase 6, per the user's own
+explicit next-up list**: the Lightbar window, the Controller Reactive
+window, and the Diagnostics window — "we are going to tackle [them]
+one at a time" starting next session. Not started at all: the
+installer (Phase 7) — explicitly deferred until Phase 6 (including
+these 3 windows) is fully done, not scheduled ahead of it. **Check
+"Immediate live state" at the very end of this file for exactly what's
+running right now** — don't rely on any of the older Phase 5/6
+"immediate live state" language earlier in this file, only the
+bottommost section is current.
 
 Phase progress (updated as each completes — see "Suggested phasing"
 below for the full list):
@@ -66,14 +72,14 @@ below for the full list):
 - [x] Windows Service wrapper (as an ASP.NET Core app, console-run so
       far — real OS service registration is Phase 7's job) — see
       "Phase 5" below
-- [~] WPF GUI — **first slice only** (main window: live preview,
-      presets, quick effects). NOT done: Lightbar/Controller Reactive/
-      Diagnostics windows, the Gradient/Reactive Typing tuning panels,
-      the Custom Key Colors painter, AND the performance/visual issues
-      the user found in live testing need fixing before this is
-      actually good. See "Phase 6" below -- read it before continuing
-      this work, it's the freshest, most load-bearing section in this
-      file as of this session ending.
+- [~] WPF GUI — **main window is functionally and visually complete**:
+      live preview, presets (whole-card click-to-apply + delete),
+      quick effects, and all 3 tuning panels (Gradient/Reactive Typing/
+      Custom Key Colors), all live-tested and theme-polished to match
+      the Python GUI. NOT done: the Lightbar/Controller Reactive/
+      Diagnostics windows (all 3 currently `MessageBox` "coming soon"
+      placeholders) — see the newest "Phase 6 continued" section below
+      before starting any of them.
 - [ ] Installer
 
 **Scope reversal, 2026-09-09**: an earlier version of this document
@@ -1082,6 +1088,272 @@ gets lost or double-guessed tomorrow**:
   on disk on the `csharp-port` branch same as any in-progress work — but
   don't assume it's committed either; check `git status` before
   building on top of it or before reporting phase completion.
+  **Update from the next session**: all of the above was committed as
+  `b75cfec` at the start of the next session, at the user's explicit
+  request ("commit and switch back over").
+
+## Phase 6 continued: tuning panels + full theming pass + window behavior (2026-09-10, third session)
+
+Picked back up the same day (after the user rebooted/logged back in,
+which is why the Python autostart task had already re-fired and needed
+switching back to the C# stack at the start of this session). Covers
+three things, in the order they happened: (1) porting the three tuning
+panels the WPF GUI was still missing, (2) a full visual theming pass
+after the user reported the result "feels functional but not
+polished," (3) three small window-behavior fixes requested afterward.
+**This is the section to read before starting the Lightbar/Controller
+Reactive/Diagnostics windows** — the patterns established here
+(`ColorSwatchButton`, `Debouncer`, the `_uiReady`/`_suppressLiveApply`
+guard pair, the implicit dark-theme control styles) are meant to be
+reused by those windows, not reinvented.
+
+### Gradient / Reactive Typing / Custom Key Colors panels — DONE
+
+Full behavioral parity with `gui/index.html`'s three tuning panels and
+`gui/app.js`'s corresponding logic (`readGradientParams`,
+`readTypingReactiveParams`, `readCustomKeysParams`,
+`syncTuningPanelsFromPreset`, the debounced live-apply functions, the
+`applyCurrentLive()` dispatcher), confirmed working live end to end
+before the theming pass started.
+
+**New files** (`JmaStudio.Gui`):
+- `ColorSwatchButton.cs` — WPF has no `<input type="color">` equivalent.
+  A small `Border`-derived control that opens
+  `System.Windows.Forms.ColorDialog` (WinForms interop, via
+  `<UseWindowsForms>true</UseWindowsForms>` in the `.csproj`) on click.
+  **Real gotcha hit and fixed**: combining `UseWPF` and
+  `UseWindowsForms` with implicit usings enabled makes the SDK
+  auto-inject a `global using System.Windows.Forms;` alongside WPF's
+  own `System.Windows.*` global usings, which collide on every
+  identically-named type both frameworks define (`Color`, `ComboBox`,
+  `Application`, `KeyEventArgs`, ...) — this broke the build project-
+  wide, not just in the one file that needed WinForms. Fixed with
+  `<Using Remove="System.Windows.Forms" />` and
+  `<Using Remove="System.Drawing" />` in the `.csproj`, since the only
+  WinForms type actually used (`ColorDialog`) is fully-qualified in
+  `ColorSwatchButton.cs` anyway.
+- `Debouncer.cs` — a tiny reusable wrapper around `DispatcherTimer`
+  matching `gui/app.js`'s `debounce(fn, ms)` helper. Each panel gets
+  its **own** `Debouncer` instance (not one shared one) so, e.g.,
+  dragging a Gradient slider can't cancel a pending Custom Key Colors
+  apply — matches app.js's independent per-function debounce closures.
+- `MainWindow.Gradient.cs`, `MainWindow.TypingReactive.cs`,
+  `MainWindow.CustomKeys.cs` — three `partial class MainWindow` files
+  (not separate classes/windows), one per panel, holding that panel's
+  state/logic. `MainWindow.TypingReactive.cs` also hosts
+  `ApplyCurrentLiveAsync()`, the single dispatcher both the Gradient
+  and Reactive Typing panels' live-apply funnel through (mirrors
+  app.js's `applyCurrentLive()`: decides whether the currently-tuned
+  gradient/custom-keys goes out wrapped in `typing_reactive` or bare,
+  based on the "Enable typing-reactive chase" checkbox). **Custom Key
+  Colors' own live-apply deliberately does NOT go through this
+  dispatcher** — ported faithfully from app.js's `applyCustomKeysLive`,
+  which always posts a bare `custom_keys` effect directly even if
+  `typing_reactive` is currently using it as a background. Confirmed
+  this is app.js's real behavior, not an oversight, before replicating
+  it — editing that grid always previews as a static board.
+
+**Shared keyboard-grid refactor**: `MainWindow.xaml.cs`'s
+`BuildKeyboardCanvas()` (the live-preview grid) was split into a
+reusable `BuildKeyGrid(Canvas, Border host, Dictionary<int,Border>
+cellMap, Action<Border,LayoutCell>? decorate)`, mirroring app.js's own
+`buildKeyboardGrid()` being shared between the live-preview board and
+the Custom Key Colors editor grid. `BuildCustomKeysCanvas()`
+(`MainWindow.CustomKeys.cs`) calls it with a `decorate` callback that
+wires click-to-select (with shift/ctrl for multi-select, matching
+`toggleKeySelection()`); the live-preview board passes `null`.
+
+**Two real WPF-specific crashes hit and fixed while wiring the Reactive
+Typing panel's controls up** — both are the same underlying class of
+bug, worth knowing about before adding more XAML-wired event handlers
+anywhere in this app:
+1. A `CheckBox` declared with a non-default `IsChecked="True"`
+   attribute in XAML, with `Checked`/`Unchecked` handlers wired in the
+   *same* file, fires those handlers **mid-BAML-parse** — before
+   later-declared named elements in that same XAML file have been
+   assigned to their fields yet. Crashed with a `NullReferenceException`
+   from inside a label-update method that referenced a combo box
+   declared further down the file. Fixed for the two affected
+   checkboxes by setting `IsChecked` in code (after
+   `InitializeComponent()` has fully returned) instead of as a XAML
+   attribute.
+2. The same failure mode, via a completely different trigger: a
+   `Slider` with `Minimum`/`Maximum` set in XAML but no `Value`
+   attribute has a default `Value` of `0`, which sits below several of
+   these sliders' `Minimum` — WPF's property-coercion logic silently
+   snaps `Value` into `[Minimum, Maximum]` range as soon as `Minimum`
+   is parsed, which **fires `ValueChanged`** as a side effect, again
+   mid-parse, again before other named elements exist.
+   **General fix, not just a per-control patch**: added a `_uiReady`
+   field (`MainWindow.xaml.cs`), false until immediately after
+   `InitializeComponent()` returns in the constructor, and added
+   `if (!_uiReady) return;` as the first line of every XAML-wired event
+   handler in the tuning panels. This is a different, complementary
+   guard from `_suppressLiveApply` (also `MainWindow.xaml.cs`, pre-
+   existing): `_uiReady` answers "is it even safe to touch other named
+   elements right now" (a WPF construction-order question), while
+   `_suppressLiveApply` answers "should this cause a network side
+   effect right now" (a "don't overwrite the live keyboard state during
+   programmatic setup" question) — both are needed, for different
+   reasons, and dynamically-created controls (the Gradient panel's
+   per-zone color/boundary rows, built entirely in C# well after the
+   window exists) can never hit the `_uiReady` problem in the first
+   place, only XAML-declared controls with XAML-wired handlers can.
+
+**Preset sync**: `MainWindow.xaml.cs` now caches the last-fetched
+`Dictionary<string,KeyboardPreset>` (`_presets` field) so applying a
+preset card can look up its real typed params without a second HTTP
+round trip, and calls a new `SyncTuningPanelsFromPreset(KeyboardPreset)`
+that dispatches by the params' concrete C# type
+(`TypingReactiveParams`/`GradientParams`/`CustomKeysParams`) to each
+panel's own `Load*Params()` method — the same job as app.js's
+`syncTuningPanelsFromPreset()`, but type-dispatched instead of
+string-`effect`-field-dispatched, since the C# side already has real
+typed params rather than an untyped dict. **Wrapped in
+`_suppressLiveApply = true/false`** — each `Load*Params()` call flips
+several checkboxes/combos that would otherwise each schedule their own
+redundant live-reapply of the preset that was just applied a moment
+ago (a real difference from app.js: setting `.checked` programmatically
+in JS never fires a change/input event, but a WPF dependency-property
+assignment always fires its `RoutedEvent`, checked or not).
+
+**Verified working live** (real hardware, before the theming pass):
+all three panels' controls tested via actual clicks/drags/color picks —
+gradient zone count/colors/boundaries/brightness, typing-reactive's
+bolt shape/style/speed/tail/decay/max-distance/flicker plus both
+background-source toggles and their mutual exclusivity, custom key
+colors' click-to-select (single and shift-click multi-select),
+paint/default color pickers, select-all/deselect/reset/clear/pull-
+current, and recent-colors persistence (a small JSON file under
+`%LocalAppData%\JmaStudio\gui-recent-colors.json`, the closest WPF
+equivalent to `localStorage` — same best-effort try/catch spirit as
+app.js's own `loadRecentColors`/`saveRecentColors`).
+
+### Full visual theming pass — DONE, user-confirmed
+
+User's own words kicking this off: "It all seems to be functional but
+nothing feels polished. The sliders are blocky looking, the apply and
+X on the pre-sets look stupid, you have black text on a grey
+background... This is a UI for gamers not IT administrators." All of
+the below was in `MainWindow.xaml`'s `Window.Resources` (replacing the
+earlier minimal one) unless noted, and confirmed fixed one issue at a
+time via live screenshots, not assumed:
+
+- **Palette**: replaced the ad hoc first-slice colors with values
+  transcribed from `gui/style.css`'s `:root` variables (`--bg`,
+  `--panel`, `--accent-a/b/c`, `--success`, `--danger`, the
+  `--accent-grad` gradient), as real `SolidColorBrush`/
+  `LinearGradientBrush` resources (`BgBrush`, `PanelBrush`,
+  `CardBrush`, `AccentABrush`/`AccentBBrush`/`AccentCBrush`,
+  `AccentGradBrush`, `SuccessBrush`, `DangerBrush`, `TrackBrush`,
+  `HoverOverlayBrush`).
+- **Sliders**: WPF's default `Slider` renders as the plain blocky
+  system control the user flagged. Re-templated (implicit style, no
+  `x:Key`, so this covers every `Slider` in the window including the
+  Gradient panel's dynamically-created boundary sliders for free) as a
+  thin flat track (matching `gui/style.css`'s range input, which is a
+  single flat color with no filled/unfilled split) with a glowing
+  gradient-filled circular thumb (`DropShadowEffect`, a dark ring
+  border) — the standard WPF pattern of only re-skinning the `Track`'s
+  `DecreaseRepeatButton`/`IncreaseRepeatButton`/`Thumb` rather than
+  replacing the whole template, so drag/click-to-set behavior keeps
+  working unmodified.
+- **ComboBox**: WPF's default `ComboBox` popup renders as a plain
+  white/light list with black text **regardless of the app's own
+  theme** — this was (half of) the "black text on grey" report. Fully
+  re-templated (implicit style): a dark toggle button with a small
+  chevron `Path` instead of the default arrow glyph, and a dark
+  `Popup`/`Border`/`ComboBoxItem` list with a hover-highlight and a
+  selected-item accent color.
+- **CheckBox**: the other half of "black text on grey" — WPF's default
+  `CheckBox` template doesn't reliably inherit the window's `Foreground`
+  for its label text, rendering it near-black regardless of theme.
+  Fully re-templated (implicit style): a small rounded square that
+  fills with the accent gradient and shows a check `Path` when checked,
+  with the label text explicitly bound to the window's text color via
+  `TextElement.Foreground="{TemplateBinding Foreground}"` on the
+  template's root panel.
+- **Buttons** (`BtnGhost`/`BtnAccent` styles): re-templated with real
+  rounded corners (`CornerRadius="10"`, matching `gui/style.css`'s
+  `.btn`) and a hover state that highlights the border in the accent
+  color, replacing the flat unstyled-corner look.
+- **Preset cards**: rebuilt to match `gui/app.js`'s actual UX, which
+  this port had gotten wrong — Python's preset card is **entirely
+  clickable to apply**, with only a small circular "×" in the corner
+  as a separate click target for delete; this port instead had two
+  separate, unstyled system-default buttons ("Apply" text + "✕") side
+  by side inside the card, which is exactly what read as "the apply
+  and X... look stupid." Fixed: the card `Border` itself now has
+  `MouseLeftButtonUp="PresetCard_Click"` (`MainWindow.xaml.cs`) and a
+  hover-accent-border trigger; the delete button is a small styled
+  circle (`PresetDeleteButtonStyle`) that turns red on hover. **No
+  manual "did they click delete instead" guard was needed** — a real
+  WPF `Button`'s `Click` marks the underlying mouse-up `RoutedEvent`
+  handled before it bubbles to the card's own `MouseLeftButtonUp`
+  handler, so clicking delete never also triggers apply, for free.
+  `PresetRow` gained an `Effect` field (shown as a small subtitle on
+  the card, matching Python's card layout) — `RefreshPresetsAsync`
+  populates it from the already-fetched preset dict.
+
+**User confirmation, one round of feedback at a time, not all at
+once**: reported a checkbox-label contrast issue via screenshot AFTER
+the first theming pass landed ("looks good now, except you still have
+black text on a grey background") — this was the `CheckBox` fix above,
+added and confirmed separately from the rest. Final confirmation after
+that: "I looked at it and it is now correct."
+
+### Window behavior fixes — DONE, user-confirmed
+
+Three small, unrelated requests handled together since they all touch
+`MainWindow`'s startup behavior:
+
+1. **Top-centered window placement**, ported from `gui.py`'s
+   `_initial_position()` (its own comment: the OS/toolkit default
+   placement left the window too low, needing a manual drag up every
+   time it opened). Set in `MainWindow`'s constructor, right after
+   `InitializeComponent()`:
+   `WindowStartupLocation = WindowStartupLocation.Manual;`
+   `Left = Math.Max(0, (SystemParameters.PrimaryScreenWidth - Width) / 2);`
+   `Top = 0;`. WPF's `SystemParameters` are already DPI-independent, so
+   none of `gui.py`'s empirical pixel-nudging (needed there to correct
+   for `GetSystemMetrics`' raw/DPI-virtualized coordinate mismatch) was
+   necessary here. Verified live via `GetWindowRect` on the real
+   window: `Top=0`, `Left` matched the centering formula exactly.
+2. **Single-instance enforcement**, ported from `gui.py`'s
+   `_acquire_single_instance_lock()`/`_focus_existing_instance()`. New
+   `App.xaml.cs` (previously just the empty generated stub):
+   `OnStartup` creates a named `Mutex` (`"JmaStudioGui_SingleInstance"`
+   — deliberately a different name from Python's own
+   `"JMAStudioGUI_SingleInstance"` mutex, since the two apps are
+   independent and switching between them is a supported workflow, not
+   something that should block on the other's lock); if the mutex
+   already existed, finds the existing window by exact title via
+   `FindWindow` (P/Invoke), restores it if minimized and calls
+   `SetForegroundWindow`, then `Environment.Exit(0)` before any
+   `MainWindow` gets created. **Same subtle gotcha `gui.py`'s own
+   comment documents, ported deliberately, not rediscovered**: the
+   `Mutex` instance is stored in a field on `App`, not a local variable
+   inside `OnStartup` — an unreferenced `Mutex` is eligible for GC
+   finalization (which releases the underlying OS mutex) almost
+   immediately, which would silently defeat the whole check for any
+   later launch. Verified live: launched a second copy while the first
+   was running — it exited immediately with no duplicate window, and
+   the process count stayed at 1.
+3. **Touchpad two-finger scroll was much too fast.** Root cause:
+   precision-touchpad drivers report a per-event scroll wheel `Delta`
+   scaled to swipe speed (often far larger than a physical wheel's
+   fixed 120-per-notch), and WPF's default `ScrollViewer` mouse-wheel
+   handling scales scroll distance directly by that delta — a real
+   mouse wheel notch isn't affected by this at all, only touchpad's
+   inflated values are. Fixed with a `PreviewMouseWheel` handler on the
+   main content `ScrollViewer` (`MainScrollViewer` in
+   `MainWindow.xaml.cs`) that computes the usual line-based scroll
+   amount (`delta/120 * SystemParameters.WheelScrollLines` lines) but
+   clamps it to a max of 3 lines per event before applying it via
+   `ScrollToVerticalOffset` — a real wheel notch's normal 3-line scroll
+   passes through unchanged (clamped to the same value it already was),
+   only touchpad's oversized per-event deltas get tamed. User
+   confirmation: "You got it right on the nose."
 
 ## Key technical decisions for the scaffold itself
 
@@ -1212,67 +1484,82 @@ gets lost or double-guessed tomorrow**:
    rather than in Phase 4, since it depends on the enable/disable
    plumbing this phase provides — **DONE**, see "Phase 5" above
 6. WPF GUI: replicate existing UX, add Create Preset + dominance-
-   reassert button — **IN PROGRESS, first slice only**, see "Phase 6"
-   above for exactly what exists, what's verified, and (important)
-   the unfixed performance/polish issues from live user testing
+   reassert button — **main window DONE** (live preview, presets, quick
+   effects, all 3 tuning panels, full theming, window behavior — see
+   "Phase 6" and both "Phase 6 continued" sections above). **Remaining**:
+   the Lightbar window, Controller Reactive window, and Diagnostics
+   window (currently `MessageBox` placeholders) — the user's explicit
+   next-up plan, one at a time. The "Create Preset" flow and the
+   Diagnostics dashboard's emergency-action row (dominance-reassert +
+   switch-to-Python/switch-to-C# buttons) described under settled
+   decision #11 are part of this remaining work, not yet built.
 7. Installer (location prompt, consent notice, service registration,
-   GUI autostart, preset data migration)
+   GUI autostart, preset data migration) — **explicitly deferred until
+   Phase 6's 3 remaining windows are done**, not scheduled ahead of them
+   (the user asked directly whether installer or polish comes next;
+   answer given and accepted: finish Phase 6 first so the installer
+   ships something complete).
 
-## Immediate live state as of writing this (2026-09-10, end of second Phase 6 session)
+## Immediate live state as of writing this (2026-09-10, end of third Phase 6 session)
 
 **This section supersedes every "immediate live state" note above it in
 this file — only trust this one.**
 
-- **The C# stack is fully stopped.** Both `JmaStudio.Service` (was PID
-  23700, the elevated console process bound to port 8420) and
-  `JmaStudio.Gui` were confirmed killed at the end of this session.
-  `Get-NetTCPConnection -LocalPort 8420` and
-  `Get-Process -Name JmaStudio.Service,JmaStudio.Gui` should both come
-  back empty if picking this up fresh — if either shows something
-  running, that's new since this note was written, not a leftover from
-  tonight.
-- **The Python stack is running and is the one actually driving the
-  user's real hardware right now**, restarted deliberately at the end
-  of this session per the user's explicit request ("reinstitute the
-  Python even for auto start if it was ever stopped"), via
-  `start_all.ps1` (repo root, `main`-branch script — self-elevates,
-  stops `AcerLightingService`, starts `daemon/server.py` via uvicorn on
-  the same port 8420 the C# service uses, starts `tray.py` if not
-  already running). Confirmed live: `GET http://127.0.0.1:8420/status`
-  returned `hardware_connected/lightbar_connected/controller_connected:
-  true` and `current_effect: "typing_reactive"` with the real "Red
-  Chase" `base_params` — the daemon loaded its own real default preset
-  correctly on this restart, not a blank/fallback state.
-- **The "JMA Studio Autostart" Scheduled Task (Python's autostart
-  mechanism) was checked, not just assumed** — `Get-ScheduledTask`
-  showed `State: Ready` (i.e. enabled, never disabled) and
-  `Get-ScheduledTaskInfo` showed a successful last run
-  (`LastTaskResult: 0`) from earlier the same day. **Nothing needed
-  fixing here** — the task itself was never touched/broken by any C#
-  work this project has done; it just hadn't re-fired yet because the
-  machine hasn't rebooted or the user hasn't logged off/on again since.
-  No action taken beyond confirming this.
-- **`AcerLightingService` is Stopped** (verified via `Get-Service`) —
-  expected and correct, since `start_all.ps1` stops it every run the
-  same way the C# service's own startup does (settled decision #10
-  applies to both stacks identically, they're not fighting over
-  different assumptions here).
-- **4 files are uncommitted on `csharp-port`** — see the full list at
-  the end of the "Phase 6 continued" section directly above this one.
-  Deliberately left uncommitted (user didn't ask for a commit tonight,
-  only to reach a clean stopping point) — check `git status` before
-  assuming either way.
-- **Start here next time, in this order**: (1) read "Phase 6 continued"
-  in full — it has tonight's fixes and the exact uncommitted-file list,
-  (2) decide with the user whether to commit tonight's fixes before
-  building further on top of them, (3) decide with the user whether to
-  switch back to testing the C# stack (stopped) or keep using the
-  Python stack (currently running) — **don't assume either way, ask** —
-  switching back means running `windows/src/JmaStudio.Service` and
-  `JmaStudio.Gui` again per "How to build / run / test" above, and
-  should probably start with stopping the Python daemon first (same
-  two-processes-fighting-over-hardware risk noted elsewhere in this
-  file), (4) only after that, continue with remaining Phase 6 work
-  (visual touch-ups the user explicitly deferred, the Lightbar/
-  Controller Reactive/Diagnostics windows, the tuning panels) or move
-  on to Phase 7 (installer).
+- **The C# `JmaStudio.Service` is running and is the one actually
+  driving the user's real hardware right now** — elevated console
+  process, PID 10592 at the time of writing (find it fresh via
+  `Get-NetTCPConnection -LocalPort 8420`), started earlier this session
+  after the user asked to switch back from Python. Confirmed live via
+  `GET /status`: `keyboardConnected: true`, `currentEffect:
+  "typing_reactive"` with the real "Red Chase" preset's params —
+  correct, not a fallback state. `controllerConnected: false` at the
+  time of writing (the DualSense simply wasn't connected/powered on
+  during this session — not a bug, nothing to investigate).
+- **`JmaStudio.Gui` is NOT currently running** — the user closed the
+  window at some point after the last round of live-testing in this
+  session (touchpad scroll fix). This is expected/fine: the Service
+  owns the hardware independently of whether the GUI is open. To
+  relaunch it: `dotnet run --project src/JmaStudio.Gui` from `windows/`
+  (no elevation needed, single-instance-enforced now — see below).
+- **The Python stack is fully stopped** — was running at the start of
+  this session (the "JMA Studio Autostart" scheduled task had re-fired
+  after a reboot/re-login since the previous session), stopped
+  deliberately by identifying and killing its exact 4-process tree
+  (parent PowerShell → uvicorn launcher → uvicorn worker bound to 8420,
+  and separately tray.py → its own child) before starting the C#
+  service, per the same two-processes-fighting-over-hardware caution
+  used every other time this project has switched stacks.
+- **This session's work (3 tuning panels, full theming pass, window
+  behavior fixes — see "Phase 6 continued: tuning panels..." above) is
+  being committed at the end of this session**, per the user's explicit
+  request ("fully update the handoff... the commit everything"). Check
+  `git log` on `csharp-port` to confirm this actually happened rather
+  than trusting this note alone — this file could theoretically be read
+  before that commit lands. The 5 modified + 5 new files are listed at
+  the top of this session's `git status` output; no separate manual
+  list is maintained here since committing right after writing this
+  section makes one immediately redundant.
+- **The user is about to update the Claude Code extension in VS Code**
+  before continuing — if a fresh session picks this up, that update
+  already happened; no action needed regarding it.
+- **Explicit, settled next-up plan directly from the user**: "we are
+  going to tackle the lightbar, Reactive controller, and diagnostics
+  windows one at a time." Not "whichever seems easiest" or "figure out
+  a good order" — the order as stated is Lightbar, then Controller
+  Reactive, then Diagnostics, one at a time (build + verify live one
+  fully before starting the next, same standard this whole project has
+  held to throughout). Don't re-propose a different order without the
+  user raising it first.
+- **Start here next time, in this order**: (1) read this whole "Phase 6
+  continued: tuning panels..." section above before writing any new GUI
+  code — the `ColorSwatchButton`/`Debouncer`/`_uiReady`/
+  `_suppressLiveApply`/implicit-dark-control-style patterns established
+  there are meant to be reused for the 3 new windows, not reinvented;
+  (2) confirm current live state fresh (service/GUI/Python process
+  status, current effect) rather than trusting this note blindly, since
+  time may have passed; (3) start the Lightbar window — it's simplest
+  of the 3 (no new hardware-state concepts, the Service's
+  `/lightbar/*` endpoints are all already built per "Phase 5" above),
+  build it, verify it live against the real lightbar, get explicit user
+  confirmation, THEN move to Controller Reactive, THEN Diagnostics —
+  don't build more than one window ahead of live verification.

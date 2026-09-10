@@ -8,8 +8,10 @@
 
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using JmaStudio.Presets;
 
 namespace JmaStudio.Gui;
 
@@ -33,6 +35,29 @@ public partial class MainWindow : Window
     private LayoutResponse? _layout;
     private string? _activePresetName;
 
+    // True only during InitializeAsync's panel setup. The Gradient/Reactive
+    // Typing/Custom Key Colors panels' live-apply is debounced ~120ms out,
+    // so merely checking a flag inside the eventual apply is too late --
+    // by the time the timer fires, startup has already finished and the
+    // flag would read false again, letting a stale default (e.g. a blank
+    // 2-zone gradient) silently overwrite whatever's actually live on the
+    // keyboard a moment after the window opens. Each panel's Fire*Live()
+    // method checks this BEFORE starting its debounce timer, so nothing
+    // gets scheduled in the first place while this is true.
+    private bool _suppressLiveApply = true;
+
+    // False until InitializeComponent() returns. WPF can fire a XAML-wired
+    // event handler DURING BAML parsing itself -- not just from an explicit
+    // non-default attribute like IsChecked="True" (which fires Checked
+    // immediately), but also as a side effect of property coercion (e.g.
+    // setting a Slider's Minimum coerces its still-default Value into
+    // range, firing ValueChanged) -- before every named element later in
+    // the same XAML file has been assigned to its field yet. Every
+    // XAML-wired handler in the tuning panels checks this first and
+    // no-ops if the UI isn't fully built yet; hit this live twice (once
+    // via a CheckBox, once via a Slider) before adding the guard.
+    private readonly bool _uiReady;
+
     // Same exclusion set as gui/app.js's HIDDEN_FROM_CHIPS: these effects
     // are either diagnostic-only (probe/mask), meaningless with their
     // bare defaults (custom_keys defaults to an empty color map + black
@@ -52,6 +77,17 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _uiReady = true; // every named element now exists; see the field's comment
+
+        // Centered left-to-right, flush against the top of the screen --
+        // matches gui.py's _initial_position() (its own comment there: the
+        // OS/toolkit default placement left the window too low, needing a
+        // manual drag up every time it opened). WPF's SystemParameters are
+        // already DPI-independent, unlike the raw GetSystemMetrics call
+        // gui.py uses, so no empirical pixel-nudge is needed here.
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = Math.Max(0, (SystemParameters.PrimaryScreenWidth - Width) / 2);
+        Top = 0;
         _framePollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _framePollTimer.Tick += async (_, _) => await PollFrameAsync();
         _statusPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
@@ -80,6 +116,13 @@ public partial class MainWindow : Window
                 .ToArray();
 
             await RefreshPresetsAsync();
+
+            InitializeGradientPanel();
+            InitializeTypingReactivePanel();
+            InitializeCustomKeysPanel();
+            BuildCustomKeysCanvas();
+            _suppressLiveApply = false;
+
             await PollStatusAsync();
             await PollFrameAsync();
         }
@@ -98,24 +141,29 @@ public partial class MainWindow : Window
     // per-key pixel range) rather than a fixed px-per-unit, and gives
     // each key its real width/height/label instead of a uniform square
     // -- the "layout sucks" feedback was about exactly this gap versus
-    // the Python reference.
-    private void BuildKeyboardCanvas()
+    // the Python reference. Shared by the live-preview board (this method)
+    // and the Custom Key Colors editor grid (MainWindow.CustomKeys.cs's
+    // BuildCustomKeysCanvas) via BuildKeyGrid below -- both lay out the
+    // same physical key positions, just with different per-cell behavior.
+    private void BuildKeyboardCanvas() => BuildKeyGrid(KeyboardCanvas, PreviewBoardHost, _cellBorders, null);
+
+    private void BuildKeyGrid(Canvas canvas, Border host, Dictionary<int, Border> cellMap, Action<Border, LayoutCell>? decorate)
     {
         if (_layout is null || _layout.Cells.Length == 0) return;
-        KeyboardCanvas.Children.Clear();
-        _cellBorders.Clear();
+        canvas.Children.Clear();
+        cellMap.Clear();
 
         double maxCol = _layout.Cells.Max(c => c.Col);
         double maxRow = _layout.Cells.Max(c => c.Row);
         double totalCols = maxCol + 3;
         double totalRows = maxRow + 1.4;
 
-        double availableWidth = PreviewBoardHost.ActualWidth - 40;
+        double availableWidth = host.ActualWidth - 40;
         if (availableWidth <= 0) availableWidth = 900;
         double unit = Math.Max(16, Math.Min(34, availableWidth / totalCols));
 
-        KeyboardCanvas.Width = totalCols * unit;
-        KeyboardCanvas.Height = totalRows * unit;
+        canvas.Width = totalCols * unit;
+        canvas.Height = totalRows * unit;
 
         foreach (LayoutCell cell in _layout.Cells)
         {
@@ -142,12 +190,32 @@ public partial class MainWindow : Window
             };
             Canvas.SetLeft(border, cell.Col * unit);
             Canvas.SetTop(border, cell.Row * unit);
-            KeyboardCanvas.Children.Add(border);
-            _cellBorders[cell.Index] = border;
+            canvas.Children.Add(border);
+            cellMap[cell.Index] = border;
+            decorate?.Invoke(border, cell);
         }
     }
 
     private void PreviewBoardHost_SizeChanged(object sender, SizeChangedEventArgs e) => BuildKeyboardCanvas();
+
+    // Precision-touchpad two-finger scroll drivers report a much larger
+    // per-event wheel delta than a physical mouse wheel's fixed 120-per-
+    // notch (scaled to swipe speed, not quantized). WPF's default
+    // ScrollViewer wheel handling scales scroll distance directly by that
+    // delta, so a fast swipe turns into a huge jump -- a real mouse
+    // wheel's normal notch (delta exactly 120) isn't affected by this at
+    // all, only touchpad's inflated values are. Clamping the number of
+    // "lines" scrolled per event to a normal single-notch's worth tames
+    // the touchpad case while leaving real wheel scrolling unchanged.
+    private void MainScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        e.Handled = true;
+        const double lineHeight = 16.0; // WPF's default line-scroll unit
+        const double maxLinesPerEvent = 3.0; // matches SystemParameters.WheelScrollLines' usual default
+        double rawLines = e.Delta / 120.0 * SystemParameters.WheelScrollLines;
+        double clampedLines = Math.Clamp(rawLines, -maxLinesPerEvent, maxLinesPerEvent);
+        MainScrollViewer.ScrollToVerticalOffset(MainScrollViewer.VerticalOffset - clampedLines * lineHeight);
+    }
 
     private async Task PollFrameAsync()
     {
@@ -213,10 +281,54 @@ public partial class MainWindow : Window
         ToastText.Text = $"{ex.GetType().Name}: {ex.Message}" + (ex.InnerException is { } inner ? $" -> {inner.GetType().Name}: {inner.Message}" : "");
     }
 
+    // Cached so ApplyPreset_Click can look up the just-applied preset's
+    // real typed params (for SyncTuningPanelsFromPreset) without a second
+    // round trip -- GetPresetsAsync already returns them fully deserialized.
+    private Dictionary<string, KeyboardPreset> _presets = new();
+
     private async Task RefreshPresetsAsync()
     {
-        var presets = await _api.GetPresetsAsync();
-        PresetsList.ItemsSource = presets.Keys.OrderBy(n => n).Select(name => new PresetRow(name)).ToList();
+        _presets = await _api.GetPresetsAsync();
+        PresetsList.ItemsSource = _presets
+            .OrderBy(kv => kv.Key)
+            .Select(kv => new PresetRow(kv.Key, kv.Value.Effect))
+            .ToList();
+    }
+
+    // Ported from app.js's syncTuningPanelsFromPreset: after applying a
+    // preset, reflect its params into whichever tuning panel(s) they
+    // belong to, so re-opening Gradient/Reactive Typing/Custom Key Colors
+    // shows what's actually live instead of stale leftover UI state.
+    // Suppressed while running -- each Load*Params call flips several
+    // checkboxes/combos that would otherwise each schedule their own
+    // redundant live-reapply of the preset we just applied a moment ago
+    // (app.js's equivalent doesn't have this problem: setting `.checked`
+    // programmatically in JS never fires a change/input event the way a
+    // WPF dependency-property assignment fires its RoutedEvent).
+    private void SyncTuningPanelsFromPreset(KeyboardPreset preset)
+    {
+        _suppressLiveApply = true;
+        try
+        {
+            TrEnabledCheck.IsChecked = preset.Effect == "typing_reactive";
+            switch (preset.Params)
+            {
+                case JmaStudio.Effects.TypingReactiveParams trp:
+                    LoadTypingReactiveParams(trp);
+                    break;
+                case JmaStudio.Effects.GradientParams gp:
+                    LoadGradientParams(gp);
+                    break;
+                case JmaStudio.Effects.CustomKeysParams ckp:
+                    LoadCustomKeysParams(ckp);
+                    break;
+            }
+            UpdateTypingReactiveLabels();
+        }
+        finally
+        {
+            _suppressLiveApply = false;
+        }
     }
 
     private void ShowToast(string message)
@@ -247,14 +359,22 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void ApplyPreset_Click(object sender, RoutedEventArgs e)
+    // The whole preset card is clickable (matches gui/app.js exactly --
+    // there's no separate "Apply" button). Wired to the card Border's
+    // MouseLeftButtonUp rather than a Click, since Border has no Click
+    // event; the small delete "x" is a real Button, so its own Click
+    // marks the underlying mouse-up handled before it bubbles here,
+    // which is what keeps a delete-click from also applying the preset.
+    private async void PresetCard_Click(object sender, MouseButtonEventArgs e)
     {
-        if (sender is Button { Tag: string name })
+        if (sender is not Border { Tag: string name }) return;
+        await _api.ApplyPresetAsync(name);
+        _activePresetName = name;
+        if (_presets.TryGetValue(name, out KeyboardPreset? preset))
         {
-            await _api.ApplyPresetAsync(name);
-            _activePresetName = name;
-            ShowToast($"Applied \"{name}\"");
+            SyncTuningPanelsFromPreset(preset);
         }
+        ShowToast($"Applied \"{name}\"");
     }
 
     private async void DeletePreset_Click(object sender, RoutedEventArgs e)
@@ -305,7 +425,7 @@ public partial class MainWindow : Window
         MessageBox.Show(this, "Diagnostics window is a follow-up piece of Phase 6, not built in this pass yet.", "Coming soon");
 }
 
-public sealed record PresetRow(string Name);
+public sealed record PresetRow(string Name, string Effect);
 
 // DisplayName has underscores replaced with spaces -- WPF's Button.Content
 // treats a literal "_" as an access-key (mnemonic) marker, turning the

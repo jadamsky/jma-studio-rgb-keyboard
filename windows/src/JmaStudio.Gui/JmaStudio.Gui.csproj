@@ -6,8 +6,23 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- WPF has no built-in color picker. Rather than pull in a third-party
+         control library for one widget, System.Windows.Forms.ColorDialog
+         (a full RGB/hex picker) is used via interop; see ColorSwatchButton.cs. -->
+    <UseWindowsForms>true</UseWindowsForms>
     <Platforms>x64</Platforms>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UseWindowsForms auto-adds a global "using System.Windows.Forms;",
+         which collides with WPF's own System.Windows.* types (Color,
+         ComboBox, Application, KeyEventArgs, ...) across every file in the
+         project. The only WinForms type actually used (ColorDialog, in
+         ColorSwatchButton.cs) is already fully-qualified there, so this is
+         safe to drop. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\JmaStudio.Hardware\JmaStudio.Hardware.csproj" />
