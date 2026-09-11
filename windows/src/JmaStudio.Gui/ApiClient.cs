@@ -31,6 +31,26 @@ public sealed record ControllerReactiveStatusResponse(bool Connected, bool Enabl
 public sealed record ControllerReactiveDefaultsResponse(
     bool BackgroundEnabled, RgbColor BackgroundColor, RgbColor GroupColor, double Deadzone);
 
+// ---- diagnostics ----
+
+public sealed record LatencySnapshot(double Min, double Avg, double Max, long Count);
+public sealed record DiagnosticsKeyboardInfo(bool Connected, bool Detected, int VendorId, int ProductId);
+public sealed record DiagnosticsLightbarInfo(bool Connected, bool Detected, LightbarState? State);
+public sealed record DiagnosticsControllerInfo(bool Connected, bool Detected);
+public sealed record DiagnosticsPerfInfo(long FramesRendered, long FramesWritten, LatencySnapshot HidLatencyMs, LatencySnapshot WmiLatencyMs);
+public sealed record AcerLightingServiceInfo(string Status, string StartMode);
+public sealed record PythonInstallInfo(bool Installed, bool ScheduledTaskExists, bool ScheduledTaskEnabled, string RepoRoot);
+
+public sealed record DiagnosticsStatusResponse(
+    double UptimeSeconds, string LogFilePath,
+    DiagnosticsKeyboardInfo Keyboard, DiagnosticsLightbarInfo Lightbar, DiagnosticsControllerInfo Controller,
+    DiagnosticsPerfInfo Perf, AcerLightingServiceInfo AcerLightingService,
+    string[] SuspiciousProcesses, PythonInstallInfo Python);
+
+public sealed record RescanResponse(bool KeyboardDetected, bool LightbarDetected, bool ControllerDetected);
+public sealed record ControllerLiveResponse(bool Connected, ControllerState? State);
+public sealed record LogsResponse(string[] Lines);
+
 public sealed class ApiClient
 {
     private readonly HttpClient _http;
@@ -78,6 +98,12 @@ public sealed class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<string?> GetDefaultPresetAsync()
+    {
+        var res = await _http.GetFromJsonAsync<DefaultPresetResponse>("/default", Json);
+        return res?.DefaultPreset;
+    }
+
     public async Task<bool> SetDefaultPresetAsync(string name)
     {
         var response = await _http.PostAsJsonAsync("/default", new { Name = name }, Json);
@@ -85,6 +111,27 @@ public sealed class ApiClient
     }
 
     public async Task<bool> TurnOffAsync() => await SetEffectAsync("static", new StaticParams());
+
+    public async Task<bool> SetAllWhiteAsync() =>
+        await SetEffectAsync("static", new StaticParams { Color = new RgbColor(255, 255, 255) });
+
+    // ---- system (tray icon's "Close and End Service") ----
+
+    public async Task<bool> ShutdownServiceAsync()
+    {
+        try
+        {
+            var response = await _http.PostAsync("/system/shutdown", null);
+            return response.IsSuccessStatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            // Expected in the common case -- the Service starts tearing
+            // itself down before the response necessarily finishes
+            // flushing back to this client.
+            return true;
+        }
+    }
 
     public async Task<bool> ApplyEffectDefaultAsync(string name) =>
         (await _http.PostAsync($"/effects/{Uri.EscapeDataString(name)}/apply-default", null)).IsSuccessStatusCode;
@@ -205,4 +252,27 @@ public sealed class ApiClient
 
     public async Task<ControllerReactiveDefaultsResponse?> GetControllerReactiveDefaultsAsync() =>
         await _http.GetFromJsonAsync<ControllerReactiveDefaultsResponse>("/controller-reactive/defaults", Json);
+
+    // ---- diagnostics ----
+
+    public async Task<DiagnosticsStatusResponse?> GetDiagnosticsStatusAsync() =>
+        await _http.GetFromJsonAsync<DiagnosticsStatusResponse>("/diagnostics/status", Json);
+
+    public async Task<bool> TestKeyboardAsync() =>
+        (await _http.PostAsync("/diagnostics/test-keyboard", null)).IsSuccessStatusCode;
+
+    public async Task<bool> TestLightbarAsync() =>
+        (await _http.PostAsync("/diagnostics/test-lightbar", null)).IsSuccessStatusCode;
+
+    public async Task<RescanResponse?> RescanAsync()
+    {
+        var response = await _http.PostAsync("/diagnostics/rescan", null);
+        return response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<RescanResponse>(Json) : null;
+    }
+
+    public async Task<ControllerLiveResponse?> GetControllerLiveAsync() =>
+        await _http.GetFromJsonAsync<ControllerLiveResponse>("/diagnostics/controller-live", Json);
+
+    public async Task<LogsResponse?> GetLogsAsync(int lines = 200) =>
+        await _http.GetFromJsonAsync<LogsResponse>($"/diagnostics/logs?lines={lines}", Json);
 }

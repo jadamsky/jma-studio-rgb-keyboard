@@ -2,7 +2,8 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:JmaStudio.Gui"
-             StartupUri="MainWindow.xaml">
+             StartupUri="MainWindow.xaml"
+             ShutdownMode="OnExplicitShutdown">
     <Application.Resources>
         <!-- Shared dark theme for every window in the app. Originally lived
              in MainWindow's own Window.Resources, promoted here once a second
@@ -68,6 +69,15 @@
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <!-- Diagnostics window's emergency-action row: these buttons
+             trigger a real elevated process launch (Verb="runas"), so
+             they're visually flagged as dangerous/administrative rather
+             than blending in with ordinary ghost buttons. -->
+        <Style x:Key="BtnDanger" TargetType="Button" BasedOn="{StaticResource BtnGhost}">
+            <Setter Property="Foreground" Value="{StaticResource DangerBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource DangerBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
 
         <Style TargetType="TextBlock" x:Key="PanelHeader">

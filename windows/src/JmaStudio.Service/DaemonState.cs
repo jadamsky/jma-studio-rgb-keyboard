@@ -22,17 +22,25 @@ public sealed class DaemonState
     private long _framesRendered;
     private long _framesWritten;
 
-    /// <summary>`fallbackEffectName`/`fallbackParams` are used only the
-    /// very first time this ever runs (no live state persisted yet) --
-    /// the caller should resolve these from AppConfig.DefaultPreset when
-    /// possible, so a fresh install boots into the user's actual
-    /// migrated default preset rather than a bare black screen.</summary>
-    public DaemonState(JsonStore<KeyboardPreset?> liveStateStore, string fallbackEffectName, EffectParams fallbackParams)
+    /// <summary>`startupEffectName`/`startupParams` are applied
+    /// unconditionally on every boot -- the caller resolves these from
+    /// AppConfig.DefaultPreset (see Program.cs's ResolveStartupEffect).
+    /// Changed 2026-09-10, at the user's explicit request: this
+    /// previously preferred whatever was last persisted to
+    /// `liveStateStore` over the configured default, so a restart
+    /// resumed the last-active effect instead of the user's checkmarked
+    /// default -- also a real behavior gap from the Python reference,
+    /// which has no "resume last state" concept at all and always
+    /// applies config.json's default_preset on every boot. Restoring
+    /// that parity was the point, not an arbitrary preference.
+    /// `liveStateStore` itself is unchanged and still written on every
+    /// SetEffect() call (still useful as a last-known-state record), it
+    /// just no longer overrides the default at startup.</summary>
+    public DaemonState(JsonStore<KeyboardPreset?> liveStateStore, string startupEffectName, EffectParams startupParams)
     {
         _liveStateStore = liveStateStore;
-        KeyboardPreset? saved = liveStateStore.Load();
-        _effectName = saved?.Effect ?? fallbackEffectName;
-        _params = saved?.Params ?? fallbackParams;
+        _effectName = startupEffectName;
+        _params = startupParams;
     }
 
     public void SetEffect(string effectName, EffectParams parameters)

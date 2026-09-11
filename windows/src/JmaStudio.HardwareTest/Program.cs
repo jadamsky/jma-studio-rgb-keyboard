@@ -7,6 +7,8 @@
 //
 // Usage: dotnet run --project src/JmaStudio.HardwareTest -- <command> [args]
 
+using System.Diagnostics;
+using System.Management;
 using JmaStudio.Effects;
 using JmaStudio.Hardware;
 using JmaStudio.HardwareTest;
@@ -82,6 +84,15 @@ try
         case "lightbar-preset-demo":
             LightbarPresetDemo(args);
             break;
+        case "reassert-dominance":
+            ReassertDominance(args);
+            break;
+        case "switch-to-python":
+            SwitchToPython(args);
+            break;
+        case "switch-to-csharp":
+            SwitchToCSharp(args);
+            break;
         default:
             Console.WriteLine($"Unknown command: {command}");
             PrintUsage();
@@ -139,6 +150,17 @@ void PrintUsage()
                                                               keyboard (typing_reactive gets a synthetic keypress)
           lightbar-preset-demo <name> [--out-dir path]       Apply a migrated lightbar preset via
                                                               Lightbar.ApplyState(). REQUIRES ADMINISTRATOR
+
+          reassert-dominance [--out-dir path]                Diagnostics window's emergency button #1: re-stop
+                                                              +disable AcerLightingService and re-push the last
+                                                              persisted lightbar state. REQUIRES ADMINISTRATOR
+          switch-to-python [--python-root path]              Diagnostics window's emergency button #2: kill the
+                                                              C# GUI/Service, re-enable Python's autostart task,
+                                                              launch start_all.bat. REQUIRES ADMINISTRATOR
+          switch-to-csharp                                   Diagnostics window's emergency button #3: the exact
+                                                              inverse -- kill the Python daemon/tray/GUI, disable
+                                                              its autostart task, launch the C# Service+GUI.
+                                                              REQUIRES ADMINISTRATOR
         """);
 }
 
@@ -524,5 +546,193 @@ static void EffectDemoFromStatus(string[] args)
     Console.WriteLine($"Loaded '{effectName}' from {jsonPath}. Running for {seconds}s with a rotating synthetic keypress across {syntheticKeys.Length} cells...");
     using var kb = Keyboard.Open();
     EffectDemo.Run(kb, effect, parameters, seconds, registry, syntheticKeys);
+    Console.WriteLine("Done.");
+}
+
+// ---- Diagnostics window emergency-action row (windows/HANDOFF.md
+// settled decision #11) -- run here, as separate one-shot elevated
+// processes, rather than as HTTP endpoints on the already-running
+// Service. See JmaStudio.Service/DiagnosticsManager.cs's header comment
+// for why: (1) the GUI launches each of these via Verb="runas" so every
+// click genuinely triggers its own UAC prompt, matching the shield-icon
+// convention -- routing through an already-elevated Service would never
+// prompt at all; (2) switch-to-python needs to end by killing the very
+// Service process that would otherwise be handling the HTTP request;
+// (3) switch-to-csharp needs to work even when the Service isn't
+// running at all (Python is the active stack). All three assume they're
+// invoked the same way every other elevated command here is: from
+// `windows/` (so DefaultPythonRoot()/DefaultPresetsOutDir() resolve
+// correctly), already elevated.
+
+static void StopAndDisableAcerLightingService()
+{
+    // Small intentional duplication of JmaStudio.Service's
+    // AcerLightingServiceManager.StopAndDisable() -- referencing that
+    // ASP.NET Core Web SDK project from this lightweight console tool
+    // would pull in the whole web framework reference for ~15 lines of
+    // logic that never changes independently of this file anyway.
+    const string serviceName = "AcerLightingService";
+    try
+    {
+        using var controller = new System.ServiceProcess.ServiceController(serviceName);
+        _ = controller.Status; // throws if the service doesn't exist on this machine
+        if (controller.Status != System.ServiceProcess.ServiceControllerStatus.Stopped)
+        {
+            controller.Stop();
+            controller.WaitForStatus(System.ServiceProcess.ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(10));
+        }
+    }
+    catch
+    {
+        // Not present on this machine, or already stopped -- fine either way.
+    }
+    try
+    {
+        using var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_Service WHERE Name='{serviceName}'");
+        foreach (ManagementBaseObject result in searcher.Get())
+        {
+            using var service = (ManagementObject)result;
+            service.InvokeMethod("ChangeStartMode", new object[] { "Disabled" });
+        }
+    }
+    catch
+    {
+        // Best-effort -- even if this fails, the Stop above already helps.
+    }
+}
+
+static void KillMatchingProcesses(string commandLineSubstring, string label)
+{
+    using var searcher = new ManagementObjectSearcher("SELECT ProcessId, CommandLine FROM Win32_Process");
+    int killed = 0;
+    foreach (ManagementBaseObject obj in searcher.Get())
+    {
+        if (obj["CommandLine"] is not string cmdLine
+            || !cmdLine.Contains(commandLineSubstring, StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+        int pid = Convert.ToInt32(obj["ProcessId"]);
+        try
+        {
+            Process.GetProcessById(pid).Kill();
+            Console.WriteLine($"Killed {label} (PID {pid}).");
+            killed++;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not kill PID {pid} ({label}): {ex.Message}");
+        }
+    }
+    if (killed == 0) Console.WriteLine($"No running {label} process found.");
+}
+
+static void SetScheduledTaskEnabled(string taskName, bool enabled)
+{
+    try
+    {
+        var psi = new ProcessStartInfo("schtasks.exe", $"/Change /TN \"{taskName}\" /{(enabled ? "Enable" : "Disable")}")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using Process? proc = Process.Start(psi);
+        proc?.WaitForExit(5000);
+        Console.WriteLine(proc?.ExitCode == 0
+            ? $"Scheduled task '{taskName}' {(enabled ? "enabled" : "disabled")}."
+            : $"Could not change scheduled task '{taskName}' -- it may not exist on this machine.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Could not change scheduled task '{taskName}': {ex.Message}");
+    }
+}
+
+static void ReassertDominance(string[] args)
+{
+    var (_, flags) = SplitArgs(args, 1);
+    string outDir = flags.GetValueOrDefault("out-dir", DefaultPresetsOutDir());
+
+    Console.WriteLine("Stopping + disabling AcerLightingService...");
+    StopAndDisableAcerLightingService();
+    Console.WriteLine("Done.");
+
+    var store = new JmaStudio.Presets.PresetStore(outDir);
+    var savedLightbar = store.LiveLightbarState.Load();
+    if (savedLightbar is not null)
+    {
+        try
+        {
+            Lightbar lb = Lightbar.Open();
+            lb.ApplyState(savedLightbar);
+            Console.WriteLine("Re-applied the last-known lightbar state.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not re-apply lightbar state: {ex.Message}");
+        }
+    }
+    else
+    {
+        Console.WriteLine("No persisted lightbar state found to re-apply.");
+    }
+    Console.WriteLine("If JmaStudio.Service is still running, its own render loop keeps driving the keyboard every frame -- nothing else to nudge there.");
+}
+
+static void SwitchToPython(string[] args)
+{
+    var (_, flags) = SplitArgs(args, 1);
+    string pythonRoot = flags.GetValueOrDefault("python-root", DefaultPythonRoot());
+    string startAllBat = Path.Combine(pythonRoot, "start_all.bat");
+    if (!File.Exists(startAllBat))
+    {
+        Console.WriteLine($"ERROR: {startAllBat} not found -- the Python version doesn't appear to be installed on this machine. Aborting, nothing was changed.");
+        return;
+    }
+
+    Console.WriteLine("Switching to the Python version...");
+    KillMatchingProcesses("JmaStudio.Gui", "the C# GUI");
+    KillMatchingProcesses("JmaStudio.Service", "the C# Service");
+    SetScheduledTaskEnabled("JMA Studio Autostart", enabled: true);
+
+    Console.WriteLine($"Starting {startAllBat}...");
+    Process.Start(new ProcessStartInfo(startAllBat) { WorkingDirectory = pythonRoot, UseShellExecute = true });
+    Console.WriteLine("Done. The Python daemon/tray/GUI should be starting now -- this process is already " +
+                       "elevated, so start_all.ps1's own self-elevation check should not prompt again.");
+}
+
+static void SwitchToCSharp(string[] args)
+{
+    string windowsRoot = Directory.GetCurrentDirectory();
+
+    Console.WriteLine("Switching to the C# version...");
+    KillMatchingProcesses("uvicorn", "the Python daemon");
+    KillMatchingProcesses("tray.py", "the Python tray icon");
+    KillMatchingProcesses("gui.py", "the Python GUI");
+    SetScheduledTaskEnabled("JMA Studio Autostart", enabled: false);
+
+    // No installer/published exe exists yet (Phase 7) -- this launches
+    // the exact same `dotnet run` dev commands documented in
+    // HANDOFF.md's "How to build / run / test". Once Phase 7 ships a
+    // real installed exe, this should launch that instead. Also note:
+    // since this whole process is already elevated (needed for the
+    // scheduled-task/process changes above), both children inherit that
+    // elevation -- including the GUI, which normally runs unelevated.
+    // Acceptable for now; the Phase 7 installer's real GUI autostart
+    // entry should launch it unelevated as usual.
+    Console.WriteLine("Starting JmaStudio.Service...");
+    Process.Start(new ProcessStartInfo("dotnet", $"run --project \"{Path.Combine(windowsRoot, "src", "JmaStudio.Service")}\"")
+    {
+        WorkingDirectory = windowsRoot,
+        UseShellExecute = true,
+    });
+    Console.WriteLine("Starting JmaStudio.Gui...");
+    Process.Start(new ProcessStartInfo("dotnet", $"run --project \"{Path.Combine(windowsRoot, "src", "JmaStudio.Gui")}\"")
+    {
+        WorkingDirectory = windowsRoot,
+        UseShellExecute = true,
+    });
     Console.WriteLine("Done.");
 }

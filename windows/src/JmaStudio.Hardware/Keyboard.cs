@@ -66,6 +66,12 @@ public readonly record struct RgbColor(byte R, byte G, byte B);
 /// </summary>
 public sealed class Keyboard : IDisposable
 {
+    // Diagnostics window's perf tile -- records the full SendFrame cost
+    // (8 interrupt-OUT packets + the mode-select/commit feature reports),
+    // not just one packet, since that's the number that actually matters
+    // against the render loop's ~33ms/frame budget.
+    public static readonly LatencyStats HidLatency = new();
+
     private readonly HidStream _stream;
 
     private Keyboard(HidStream stream)
@@ -195,6 +201,19 @@ public sealed class Keyboard : IDisposable
                 $"expected {KeyboardConstants.NumCells} colors, got {colors.Count}", nameof(colors));
         }
 
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            SendFrameCore(colors);
+        }
+        finally
+        {
+            HidLatency.Record(sw.Elapsed.TotalMilliseconds);
+        }
+    }
+
+    private void SendFrameCore(IReadOnlyList<RgbColor> colors)
+    {
         byte[] buf = new byte[KeyboardConstants.NumCells * KeyboardConstants.BytesPerCell];
         for (int i = 0; i < colors.Count; i++)
         {

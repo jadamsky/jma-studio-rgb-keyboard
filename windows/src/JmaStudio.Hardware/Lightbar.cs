@@ -148,6 +148,19 @@ public sealed class Lightbar
         return new Lightbar();
     }
 
+    /// <summary>Cheap presence-only probe for the Diagnostics window's
+    /// "Re-scan hardware" button -- does NOT require elevation, unlike
+    /// every Set* call. Distinct from a running LightbarController's own
+    /// `Available` (was a Lightbar successfully constructed at service
+    /// startup) -- this re-checks right now, which is the honest signal
+    /// if the WMI provider dropped out from under an already-running
+    /// service without a restart.</summary>
+    public static bool IsPresent()
+    {
+        using ManagementObject? probe = FindInstance();
+        return probe is not null;
+    }
+
     /// <summary>
     /// Returns a fresh AcerGamingFunction WMI instance, or null if this
     /// machine doesn't expose it. Used for the one-time existence probe
@@ -223,6 +236,12 @@ public sealed class Lightbar
         }
     }
 
+    // Diagnostics window's perf tile -- records just the InvokeMethod
+    // round trip (excludes the CommitRounds' own intentional 65ms sleeps
+    // in Commit(), which would otherwise dominate and hide the real WMI
+    // overhead this exists to surface).
+    public static readonly LatencyStats WmiLatency = new();
+
     private static object CallMethodOn(ManagementObject instance, string method, object gmInput)
     {
         ManagementBaseObject template = _paramTemplates.GetOrAdd(method, instance.GetMethodParameters);
@@ -231,7 +250,9 @@ public sealed class Lightbar
         // zone writes can be in flight concurrently.
         using ManagementBaseObject inParams = (ManagementBaseObject)template.Clone();
         inParams["gmInput"] = gmInput;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         using ManagementBaseObject outParams = instance.InvokeMethod(method, inParams, null);
+        WmiLatency.Record(sw.Elapsed.TotalMilliseconds);
         return outParams["gmOutput"];
     }
 

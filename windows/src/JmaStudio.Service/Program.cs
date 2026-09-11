@@ -19,6 +19,8 @@ using JmaStudio.Hardware;
 using JmaStudio.Presets;
 using JmaStudio.Service;
 
+DateTime serviceStartedAtUtc = DateTime.UtcNow;
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService();
 
@@ -58,7 +60,21 @@ string keymapPath = Environment.GetEnvironmentVariable("JMASTUDIO_KEYMAP_PATH")
     ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "..", "keymap.json"));
 Directory.CreateDirectory(dataDir);
 
-var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger("Startup");
+// keymapPath resolves to <python repo root>/keymap.json (see above) --
+// its directory IS the Python repo root, needed by the Diagnostics
+// window's install-detection and by switch-to-python/switch-to-csharp
+// (JmaStudio.HardwareTest) to find daemon/server.py, start_all.bat, etc.
+string pythonRepoRoot = Path.GetDirectoryName(keymapPath)!;
+
+// File logging for the Diagnostics window's "Logs panel" -- the Service
+// had no persistent log output at all before this (see
+// FileLoggerProvider.cs's header comment). One provider instance shared
+// by every LoggerFactory below so everything ends up in the same file.
+string logFilePath = Path.Combine(dataDir, "logs", "service.log");
+var fileLoggerProvider = new FileLoggerProvider(logFilePath);
+builder.Logging.AddProvider(fileLoggerProvider);
+
+var logger = LoggerFactory.Create(b => { b.AddConsole(); b.AddProvider(fileLoggerProvider); }).CreateLogger("Startup");
 logger.LogInformation("Data dir: {DataDir}", dataDir);
 logger.LogInformation("Keymap:   {KeymapPath} (exists: {Exists})", keymapPath, File.Exists(keymapPath));
 
@@ -85,8 +101,8 @@ var indexByName = Layout.NameToIndex(keymapPath);
 var inputListener = new InputListener(indexByName);
 inputListener.Start();
 
-(string fallbackEffect, EffectParams fallbackParams) = ResolveStartupFallback(presetStore);
-var daemonState = new DaemonState(presetStore.LiveKeyboardState, fallbackEffect, fallbackParams);
+(string startupEffect, EffectParams startupParams) = ResolveStartupEffect(presetStore);
+var daemonState = new DaemonState(presetStore.LiveKeyboardState, startupEffect, startupParams);
 
 var lightbarController = new LightbarController(lightbar, presetStore.LiveLightbarState);
 lightbarController.RestorePersistedState();
@@ -99,12 +115,14 @@ builder.Services.AddSingleton(daemonState);
 builder.Services.AddSingleton(lightbarController);
 builder.Services.AddSingleton(controllerReactiveManager);
 builder.Services.AddSingleton(inputListener);
+var selfTestGate = new SelfTestGate();
+builder.Services.AddSingleton(selfTestGate);
 // Keyboard/Controller are NOT registered in DI -- both can legitimately
 // be null (hardware not present), and nothing resolves them via
 // constructor injection; they're passed directly to the endpoint
 // mapping methods and RenderLoopService's factory below instead.
 builder.Services.AddSingleton<IHostedService>(sp => new RenderLoopService(
-    daemonState, effectRegistry, keyboard, inputListener, controller,
+    daemonState, effectRegistry, keyboard, inputListener, controller, selfTestGate,
     sp.GetRequiredService<ILogger<RenderLoopService>>()));
 // LightbarReactiveManager is constructed here (not via a DI factory) so
 // the same instance can be both started as a background loop AND handed
@@ -113,8 +131,12 @@ builder.Services.AddSingleton<IHostedService>(sp => new RenderLoopService(
 // above.
 var lightbarReactiveManager = new LightbarReactiveManager(
     lightbarController, inputListener, presetStore, keymapPath,
-    LoggerFactory.Create(b => b.AddConsole()).CreateLogger<LightbarReactiveManager>());
+    LoggerFactory.Create(b => { b.AddConsole(); b.AddProvider(fileLoggerProvider); }).CreateLogger<LightbarReactiveManager>());
 builder.Services.AddSingleton<IHostedService>(lightbarReactiveManager);
+
+var diagnosticsManager = new DiagnosticsManager(
+    lightbarController, daemonState, keyboard, controller, selfTestGate,
+    pythonRepoRoot, serviceStartedAtUtc, logFilePath);
 
 var app = builder.Build();
 
@@ -135,6 +157,8 @@ Endpoints.MapKeyboard(app, daemonState, effectRegistry, presetStore, keyboard, c
 Endpoints.MapLightbar(app, lightbarController, presetStore, daemonState, lightbarReactiveManager);
 Endpoints.MapControllerReactive(app, controllerReactiveManager, presetStore, controller);
 Endpoints.MapLayout(app, keymapPath);
+Endpoints.MapDiagnostics(app, diagnosticsManager, controller, logFilePath);
+Endpoints.MapSystem(app);
 
 // Loopback-only, same port the Python daemon used -- no auth either
 // way, trusted purely by being on 127.0.0.1, matching daemon/server.py.
@@ -155,7 +179,12 @@ static T? TryOpen<T>(string label, Func<T> open, ILogger logger) where T : class
     }
 }
 
-static (string Effect, EffectParams Params) ResolveStartupFallback(PresetStore store)
+// Applied unconditionally on every boot -- NOT just a fresh-install
+// fallback (see DaemonState.cs's own updated header comment for why
+// this changed 2026-09-10). Falls through to plain black only if no
+// default preset is configured at all, or the configured one no longer
+// exists (e.g. deleted since being set as default).
+static (string Effect, EffectParams Params) ResolveStartupEffect(PresetStore store)
 {
     AppConfig config = store.AppConfig.Load();
     if (config.DefaultPreset is { } name

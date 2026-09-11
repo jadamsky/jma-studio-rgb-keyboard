@@ -1,10 +1,8 @@
-// First-slice WPF main window: live keyboard preview, presets
-// (list/apply/delete/save/set-default), and a quick-effects grid --
-// the core of gui/index.html's UX (see windows/HANDOFF.md's Phase 6
-// section for what's deliberately deferred: the Gradient/Reactive
-// Typing tuning panels and the full Custom Key Colors painter, plus
-// the Lightbar/Controller Reactive/Diagnostics windows, which are
-// stubbed here as placeholders for now).
+// Main WPF window: live keyboard preview, presets (list/apply/delete/
+// save/set-default), a quick-effects grid, and the Gradient/Reactive
+// Typing/Custom Key Colors tuning panels -- the core of gui/index.html's
+// UX. Opens the Lightbar/Controller Reactive/Diagnostics windows as
+// separate owned windows (see windows/HANDOFF.md's Phase 6 sections).
 
 using System.Windows;
 using System.Windows.Controls;
@@ -89,6 +87,20 @@ public partial class MainWindow : Window
         _statusPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
         _statusPollTimer.Tick += async (_, _) => await PollStatusAsync();
         Loaded += MainWindow_Loaded;
+        Closing += MainWindow_Closing;
+    }
+
+    // The tray icon is now the thing that keeps running when this window
+    // isn't open (see TrayIconManager.cs) -- the X button minimizes to
+    // tray rather than exiting, matching the user's explicit design
+    // (2026-09-10). Only the tray's "Close and End Service" should
+    // actually end the process, which sets App.IsShuttingDown first so
+    // this lets that real close through instead of cancelling it.
+    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (App.IsShuttingDown) return;
+        e.Cancel = true;
+        Hide();
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -273,9 +285,10 @@ public partial class MainWindow : Window
     private async Task RefreshPresetsAsync()
     {
         _presets = await _api.GetPresetsAsync();
+        string? defaultName = await _api.GetDefaultPresetAsync();
         PresetsList.ItemsSource = _presets
             .OrderBy(kv => kv.Key)
-            .Select(kv => new PresetRow(kv.Key, kv.Value.Effect))
+            .Select(kv => new PresetRow(kv.Key, kv.Value.Effect, kv.Key == defaultName))
             .ToList();
     }
 
@@ -396,6 +409,7 @@ public partial class MainWindow : Window
             return;
         }
         bool ok = await _api.SetDefaultPresetAsync(_activePresetName);
+        if (ok) await RefreshPresetsAsync();
         ShowToast(ok ? $"\"{_activePresetName}\" is now the startup default" : "Failed to set default");
     }
 
@@ -429,11 +443,23 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DiagnosticsBtn_Click(object sender, RoutedEventArgs e) =>
-        MessageBox.Show(this, "Diagnostics window is a follow-up piece of Phase 6, not built in this pass yet.", "Coming soon");
+    private DiagnosticsWindow? _diagnosticsWindow;
+
+    private void DiagnosticsBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_diagnosticsWindow is null || !_diagnosticsWindow.IsLoaded)
+        {
+            _diagnosticsWindow = new DiagnosticsWindow { Owner = this };
+            _diagnosticsWindow.Show();
+        }
+        else
+        {
+            _diagnosticsWindow.Activate();
+        }
+    }
 }
 
-public sealed record PresetRow(string Name, string Effect);
+public sealed record PresetRow(string Name, string Effect, bool IsDefault);
 
 // DisplayName has underscores replaced with spaces -- WPF's Button.Content
 // treats a literal "_" as an access-key (mnemonic) marker, turning the

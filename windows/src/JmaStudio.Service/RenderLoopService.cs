@@ -20,17 +20,20 @@ public sealed class RenderLoopService : BackgroundService
     private readonly Keyboard? _keyboard;
     private readonly InputListener? _inputListener;
     private readonly Controller? _controller;
+    private readonly SelfTestGate _selfTestGate;
     private readonly ILogger<RenderLoopService> _logger;
 
     public RenderLoopService(
         DaemonState state, EffectRegistry registry, Keyboard? keyboard,
-        InputListener? inputListener, Controller? controller, ILogger<RenderLoopService> logger)
+        InputListener? inputListener, Controller? controller, SelfTestGate selfTestGate,
+        ILogger<RenderLoopService> logger)
     {
         _state = state;
         _registry = registry;
         _keyboard = keyboard;
         _inputListener = inputListener;
         _controller = controller;
+        _selfTestGate = selfTestGate;
         _logger = logger;
     }
 
@@ -48,6 +51,18 @@ public sealed class RenderLoopService : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             double t = stopwatch.Elapsed.TotalSeconds;
+            // A Diagnostics self-test is writing directly to the keyboard
+            // right now (see DiagnosticsManager.TestKeyboardAsync) --
+            // Keyboard's HidStream isn't safe for two threads to write to
+            // at once, so skip this tick's send entirely rather than race
+            // it. The self-test restores the last frame itself when it
+            // finishes, so nothing is lost by skipping here.
+            if (_selfTestGate.InProgress)
+            {
+                try { await Task.Delay(50, stoppingToken); }
+                catch (OperationCanceledException) { break; }
+                continue;
+            }
             try
             {
                 (string effectName, EffectParams parameters) = _state.GetEffect();

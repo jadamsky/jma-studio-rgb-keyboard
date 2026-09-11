@@ -321,4 +321,68 @@ public static class Endpoints
             });
         });
     }
+
+    /// <summary>The Diagnostics window's dashboard + non-destructive
+    /// self-tests. The 3 emergency-action buttons (re-assert dominance,
+    /// switch to Python, switch to C#) are deliberately NOT here -- see
+    /// DiagnosticsManager.cs's header comment for why those are separate
+    /// elevated one-shot processes instead.</summary>
+    public static void MapDiagnostics(WebApplication app, DiagnosticsManager diagnostics, Controller? controller, string logFilePath)
+    {
+        app.MapGet("/diagnostics/status", () => Results.Ok(diagnostics.GetStatus()));
+
+        app.MapPost("/diagnostics/test-keyboard", async () =>
+            (await diagnostics.TestKeyboardAsync())
+                ? Results.Ok()
+                : Results.Problem("Keyboard not available.", statusCode: StatusCodes.Status503ServiceUnavailable));
+
+        app.MapPost("/diagnostics/test-lightbar", async () =>
+            (await diagnostics.TestLightbarAsync())
+                ? Results.Ok()
+                : Results.Problem("Lightbar not available.", statusCode: StatusCodes.Status503ServiceUnavailable));
+
+        app.MapPost("/diagnostics/rescan", () => Results.Ok(diagnostics.Rescan()));
+
+        // Raw live stick/button readout for the self-test panel's "Test
+        // controller" live viewer -- distinct from /controller-reactive/
+        // status, which only reports connected+enabled, not the actual
+        // per-frame state.
+        app.MapGet("/diagnostics/controller-live", () => controller is null
+            ? Results.Ok(new { connected = false, state = (ControllerState?)null })
+            : Results.Ok(new { connected = controller.IsConnected, state = controller.GetState() }));
+
+        app.MapGet("/diagnostics/logs", (int? lines) =>
+        {
+            int n = lines ?? 200;
+            if (!File.Exists(logFilePath)) return Results.Ok(new { lines = Array.Empty<string>() });
+            // FileShare.ReadWrite -- FileLoggerProvider keeps this file
+            // open for writing for the Service's whole lifetime.
+            using var stream = new FileStream(logFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            string[] all = reader.ReadToEnd().Split('\n');
+            return Results.Ok(new { lines = all.Skip(Math.Max(0, all.Length - n)).ToArray() });
+        });
+    }
+
+    /// <summary>Tray icon's "Close and End Service" (JmaStudio.Gui's
+    /// TrayIconManager). The GUI runs unelevated and the Service runs
+    /// elevated, so a graceful self-shutdown over HTTP is the only
+    /// realistic way for the GUI to end this process -- Windows won't
+    /// let a lower-integrity process terminate a higher one directly.</summary>
+    public static void MapSystem(WebApplication app)
+    {
+        app.MapPost("/system/shutdown", (IHostApplicationLifetime lifetime) =>
+        {
+            // Delayed so this response finishes flushing back to the
+            // caller before the host actually stops -- StopApplication()
+            // makes app.Run() return, and Program.cs has nothing after
+            // that, so the whole process exits shortly after.
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(300);
+                lifetime.StopApplication();
+            });
+            return Results.Ok();
+        });
+    }
 }

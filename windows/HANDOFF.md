@@ -27,31 +27,25 @@ re-litigate those; they're final unless the user reopens them.
 
 ## Current status
 
-**Phases 1-5 — DONE. Phase 6 (WPF GUI) — functionally complete except
-3 remaining windows.** Read "Phase 6 continued" and, more importantly,
-**"Phase 6 continued: tuning panels + full theming pass + window
-behavior (2026-09-10, third session)"** (the newest section, right
-before "Key technical decisions") before doing any more GUI work — it
-covers the Gradient/Reactive Typing/Custom Key Colors panels (the last
-missing pieces of parity with the Python GUI), a full visual theming
-pass (the user's own words: "nothing feels polished" → after the pass,
-"looks good now" / confirmed the sliders, presets, checkboxes, and
-combos all fixed one by one), top-centered window placement, single-
-instance enforcement, and a touchpad-scroll-speed fix. Real hardware
-control confirmed live for keyboard, lightbar, AND controller. The
-whole thing runs as a real ASP.NET Core service process (console-
-testable today, real OS service registration deferred to Phase 7)
-fronting an HTTP API. **What's left in Phase 6, per the user's own
-explicit next-up list** (Lightbar → Controller Reactive → Diagnostics,
-one at a time): Lightbar and Controller Reactive are both **DONE** (see
-their own "Phase 6 continued" sections below) — **only the Diagnostics
-window remains**. Not started at all: the installer (Phase 7) —
-explicitly deferred until Phase 6 (including Diagnostics) is fully
-done, not scheduled ahead of it. **Check
+**Phases 1-6 — DONE. Phase 6.5 (tray icon) — DONE. Phase 7 (installer)
+is next, not yet started.** Read **"Phase 6.5: Tray icon (2026-09-10,
+sixth session)"** (the newest section, right before "Key technical
+decisions") before doing any more GUI work — it covers a scope addition
+the user raised mid-session (never in the original settled decisions),
+including a real crash bug found and fixed live, a startup-behavior
+change (the checkmarked default preset now applies on every boot, not
+just a fresh install), and one explicitly backlogged gap (keyboard
+sleep/hibernate resilience — do not start on this without the user
+raising it again). Every one of Phase 6's 4 windows (main, Lightbar,
+Controller Reactive, Diagnostics) plus the Phase 6.5 tray icon are all
+built and user-confirmed working. Real hardware control confirmed live
+for keyboard, lightbar, AND controller. The whole thing runs as a real
+ASP.NET Core service process (console-testable today, real OS service
+registration is Phase 7's job) fronting an HTTP API. **Check
 "Immediate live state" at the very end of this file for exactly what's
-running right now** — don't rely on any of the older Phase 5/6
-"immediate live state" language earlier in this file, only the
-bottommost section is current.
+running right now** — don't rely on any of the older "immediate live
+state" language earlier in this file, only the bottommost section is
+current.
 
 Phase progress (updated as each completes — see "Suggested phasing"
 below for the full list):
@@ -73,16 +67,21 @@ below for the full list):
 - [x] Windows Service wrapper (as an ASP.NET Core app, console-run so
       far — real OS service registration is Phase 7's job) — see
       "Phase 5" below
-- [~] WPF GUI — main window is functionally/visually complete (see
-      above). **Lightbar window — DONE** (one backlogged known issue,
-      see "Phase 6 continued: Lightbar window" below — do not attempt
-      to fix without new evidence). **Controller Reactive window —
-      DONE** (see "Phase 6 continued: Controller Reactive window"
-      below). **Only the Diagnostics window remains**, still a
-      `MessageBox` "coming soon" placeholder — see the settled decision
-      #11 design proposal above for its planned content (not locked in,
-      a menu to refine when actually started).
-- [ ] Installer
+- [x] WPF GUI — all 4 windows DONE. Main window, **Lightbar window**
+      (one backlogged known issue, see "Phase 6 continued: Lightbar
+      window" below — do not attempt to fix without new evidence),
+      **Controller Reactive window**, and **Diagnostics window** (see
+      "Phase 6 continued: Diagnostics window" below for the full-
+      dashboard build: emergency-action row, hardware/service health
+      tiles, live mini preview, perf stats, self-tests, logs panel).
+      User-confirmed working end to end.
+- [x] Tray icon (`TrayIconManager.cs`) — a scope addition raised
+      mid-session, not in the original settled decisions. See "Phase
+      6.5: Tray icon" below for the full design, a real crash bug found
+      and fixed live, and a startup-behavior change (default preset now
+      applies on every boot). One item explicitly backlogged (keyboard
+      sleep/hibernate resilience).
+- [ ] Installer — **next up, not yet started**
 
 **Scope reversal, 2026-09-09**: an earlier version of this document
 marked `effects/controller_reactive.py` + `hardware/controller.py` (the
@@ -660,10 +659,14 @@ disk yet.
   `_current_params` module globals, but with an explicit `lock`
   (settled decision: no GIL to lean on) and disk persistence on every
   `SetEffect()` call (settled decision #9) via a new `LiveKeyboardState`
-  `JsonStore` in `JmaStudio.Presets`. On first-ever boot (no live state
-  file yet), falls back to `AppConfig.DefaultPreset` looked up in the
-  migrated `KeyboardPresets` -- confirmed live: a fresh service start
-  applied "Red Chase" correctly, not a black screen.
+  `JsonStore` in `JmaStudio.Presets`. **Updated 2026-09-10 (Phase 6.5)**:
+  originally this persisted state was also read back and preferred at
+  startup (only falling back to `AppConfig.DefaultPreset` on a true
+  first-ever boot); that was changed so the configured default is now
+  applied unconditionally on every boot, matching the actual Python
+  reference's behavior -- see "Phase 6.5: Tray icon" above for the full
+  story. `LiveKeyboardState` is still written on every `SetEffect()`
+  call, just no longer consulted at startup.
 - **`LightbarController`**: wraps `Lightbar` so every mutating call
   (`SetZone`/`SetAll`/`SetMode`/`SetBrightness`/`Off`/`ApplyState`) also
   persists `GetState()` to a `LiveLightbarState` `JsonStore`, and a
@@ -1512,6 +1515,288 @@ size iterations with the user (28px → a combined logo+"Studio"-text
 version the user disliked and asked reverted → logo-only at 36px →
 final: **48px**, logo image alone, no adjacent text).
 
+## Phase 6 continued: Diagnostics window (2026-09-10, fifth session)
+
+Built the Diagnostics window (`DiagnosticsWindow.xaml`/`.xaml.cs` +
+`.SelfTest.cs` partial) — the last of the 4 Phase 6 windows. User chose
+"Full dashboard" (the largest of 3 scope tiers offered) over just the
+emergency-action row settled decision #11 requires, so this includes
+every item from that decision's "proposed additional dashboard content"
+menu: hardware/service status tiles, a live mini preview, perf stats,
+self-tests + a live controller viewer, and a logs panel — confirmed
+working end to end by the user ("working, let's move on").
+
+**Design decision worth re-reading before touching the emergency-action
+row**: the 3 buttons (re-assert dominance / switch to Python / switch
+to C#) do **NOT** call the running Service's HTTP API. They launch as
+separate one-shot elevated processes instead — new
+`reassert-dominance`/`switch-to-python`/`switch-to-csharp` commands
+added to `JmaStudio.HardwareTest` (the existing console tool from
+Phase 2), invoked from the GUI via `Process.Start` with `Verb="runas"`.
+Reasons, in `DiagnosticsManager.cs`'s own header comment:
+1. Settled decision #11 says all 3 need the UAC shield icon convention,
+   meaning each click must show a REAL elevation prompt. Routing
+   through the already-elevated Service would never prompt at all,
+   making the shield icon a lie.
+2. `switch-to-python` needs to end by killing the very Service process
+   that would otherwise be handling the HTTP request for it.
+3. `switch-to-csharp` needs to work even when the Service isn't running
+   at all (Python is the currently active stack) — there'd be nothing
+   to call.
+
+`JmaStudio.HardwareTest` needed a new `System.ServiceProcess.
+ServiceController` package reference for this (small intentional
+duplication of `AcerLightingServiceManager.StopAndDisable()` rather
+than referencing the whole ASP.NET Core `JmaStudio.Service` project
+just for ~15 lines). `switch-to-python`/`switch-to-csharp` find/kill
+the other stack's processes via a `Win32_Process` `CommandLine` search
+(same technique `start_all.ps1` already uses for its own tray-icon
+detection), flip the "JMA Studio Autostart" Scheduled Task's
+enabled/disabled state in the direction that makes sense, then launch
+the target stack. **Known limitation, not fixed**: since Phase 7's
+installer doesn't exist yet, `switch-to-csharp` falls back to the same
+`dotnet run` dev commands documented under "How to build / run / test"
+— once Phase 7 ships a real installed `.exe`, this should launch that
+instead (there's a comment marking exactly where). Also: because the
+whole command runs elevated (needed for the scheduled-task/process
+changes), the C# GUI it launches inherits that elevation too, unlike a
+normal unelevated launch — acceptable for now, worth fixing when the
+real installer's autostart entry exists.
+
+**Emergency-action gating** happens in the GUI, not the Service, so it
+still works when the Service is unreachable (Python might be the
+active stack): `DetectActiveStackLocally()` in
+`DiagnosticsWindow.xaml.cs` runs its own `Win32_Process` `CommandLine`
+scan (needed a new `System.Management` package reference on
+`JmaStudio.Gui`, which had none before) to tell which stack is
+currently running, independent of the Service. Python install detection
+comes from the Service's own `/diagnostics/status` when reachable, with
+a local filesystem-based fallback
+(`DetectPythonInstalledLocally()`) when it isn't. **Real bug found and
+fixed before the user tested this**: the WMI scan was originally called
+synchronously on the UI thread on every 2-second poll tick — moved
+behind `Task.Run` so a slow `Win32_Process` enumeration on a busy
+machine can't cause a visible micro-freeze while the window is open.
+
+**New Service-side pieces this window needed, none of which existed
+before**:
+- `DiagnosticsManager.cs` (new) — bundles hardware/service health into
+  one `GET /diagnostics/status` payload (keyboard/lightbar/controller
+  connected+detected state, `AcerLightingService` status/start mode,
+  a best-effort "suspicious process" check for `OpenRGB`/
+  `PredatorSenseService` — deliberately NOT plain `PredatorSense`, the
+  ordinary companion app, since settled decision #10 already confirmed
+  live that having it open does nothing while `AcerLightingService`
+  stays stopped; flagging it would just be a false alarm every time the
+  user has it open for unrelated reasons — this exact mistake was made
+  and caught via a live curl check before the user ever saw it), Python
+  install/scheduled-task detection via `schtasks.exe`, and the frame/
+  latency perf counters. Also implements the two non-destructive self-
+  tests (`TestKeyboardAsync`/`TestLightbarAsync`) and the presence-only
+  `Rescan()` — explicitly NOT a true hot-reconnect (the
+  keyboard/lightbar/controller handles opened once at `Program.cs`
+  startup aren't rebuilt live; that would need those locals behind a
+  mutable holder, a bigger refactor not justified yet).
+- `SelfTestGate.cs` (new) — a shared flag `RenderLoopService` checks
+  every tick so `TestKeyboardAsync`'s direct `SetStaticColor`/
+  `SendFrame` calls never interleave raw HID writes with the render
+  loop's own (`Keyboard`'s own header comment already documents it's
+  "not thread-safe by itself, callers serialize access" — this is
+  exactly that serialization, applied for the first time since a
+  Diagnostics self-test is the first caller that writes to the keyboard
+  from outside the render loop).
+- `FileLoggerProvider.cs` (new) — the Service had **no persistent log
+  output at all** before this; the Logs panel needed something to
+  tail. A minimal custom `ILoggerProvider` (no Serilog dependency),
+  truncated once per service start (same "always reflects the most
+  recent run" convention `start_all.ps1`'s own log files already use on
+  the Python side), shared by every `LoggerFactory` in `Program.cs` so
+  everything ends up in one file (`data/logs/service.log`).
+- `LatencyStats.cs` (new, in `JmaStudio.Hardware`) — a tiny min/avg/max/
+  count counter, instrumented into `Keyboard.SendFrame` (HID) and
+  `Lightbar`'s `CallMethodOn` (WMI, excluding the `Commit()` rounds' own
+  intentional 65ms sleeps so they don't drown out the real overhead).
+  Confirmed live: HID averages ~10ms, WMI averages ~19ms per call —
+  consistent with the 60-69ms/3-calls `FlashZones()` figure already
+  measured earlier this session.
+- `Lightbar.IsPresent()`/`Controller.IsPresent()` (new static presence-
+  only probes, no elevation needed for either) — power the Rescan
+  button and the status tiles' "detected but not open" distinction.
+
+**Verified live**: hardware/service status tiles, perf stats, mini
+preview, and logs panel all confirmed against the real running Service
+(`GET /diagnostics/status` curl-checked directly before the user ever
+opened the window, catching the `PredatorSense` false-positive early).
+The emergency-action row's UAC-prompt launch mechanism was built and
+reviewed but the 3 commands were **not** live-tested end to end this
+session (too disruptive to trigger `switch-to-python`/`switch-to-csharp`
+against the user's real active hardware mid-session without a specific
+reason to) — the user confirmed the window overall ("working, let's
+move on") without singling out those 3 buttons. If a future session
+needs to verify them, do it deliberately, with the user watching, not
+as a casual check.
+
+## Phase 6.5: Tray icon (2026-09-10, sixth session)
+
+**Not in the original settled decisions** — the user explicitly flagged
+this mid-session, after Phase 6 (all 4 windows) was already confirmed
+done: "We need to work on the tray icon first before installer, I don't
+think that was ever mention in the original port prompts." Correct: it
+wasn't. Python's `tray.py` (a system tray icon showing saved presets,
+launched automatically by `start_all.ps1` alongside the daemon) had no
+C# equivalent at all before this. Important consequence for Phase 7:
+Python's `start_all.ps1` only autostarts the daemon + tray icon, NOT the
+full `gui.py` window — the window opens on demand from the tray. The
+Phase 7 installer's GUI autostart entry should target whatever ends up
+launching the tray (this session's `JmaStudio.Gui.exe` itself, per the
+architecture decision below), not assume the main window should be
+autostarted directly.
+
+**Architecture, per the user's explicit answers**:
+1. **Same process as the rest of `JmaStudio.Gui`**, not a separate
+   `JmaStudio.Tray` project (unlike Python's tray.py/gui.py split) —
+   simpler, and `MainWindow` already exists as a single long-lived
+   instance (`StartupUri`-created) the tray can just Show/Hide/Activate
+   directly, no second process to coordinate.
+2. **Left-click opens the Studio window; no duplicate "Open Control
+   Panel" item in the right-click menu.**
+3. **No "Quit" item at all.** The user's own words: "if the tray is gone
+   the services aren't running." The ONLY way to make the tray icon (and
+   the Service) go away is "Close and End Service" (see below).
+4. **Closing MainWindow's X button minimizes to tray** (hides the
+   window, keeps the process/tray/Service running) rather than exiting.
+
+**New file `TrayIconManager.cs`** (`JmaStudio.Gui`) — owns a
+`System.Windows.Forms.NotifyIcon` (WPF has no tray-icon primitive of its
+own; same WinForms-interop pattern `ColorSwatchButton.cs` already
+established, including its convention of fully-qualifying
+`System.Windows.Forms`/`System.Drawing` types inline rather than
+aliasing, since both have their global usings removed project-wide).
+Context menu, top to bottom: **Keyboard Presets** submenu, **Lightbar
+Presets** submenu (both dynamically rebuilt every 5s via a
+`DispatcherTimer` — a real improvement over Python's tray.py, which only
+ever listed keyboard presets and read them once at startup, requiring a
+restart to see new ones), **Controller Reactive** (a checkable toggle
+calling the existing Phase 5 enable/disable endpoints), **Off** (kept
+from Python, keyboard only), **All White** (new sibling to Off — same
+scope, opposite color, `static` effect at RGB 255,255,255), **Close and
+End Service**.
+
+**"Close and End Service"** pushes a hardcoded final visual state, then
+gracefully shuts the Service down, then exits this GUI process:
+- Keyboard: a hardcoded `GradientParams` object, deliberately NOT
+  applied by calling the real "gradient_only" preset by name — the
+  user's own words: "I want you to hard code this not have it call the
+  preset as if it gets deleted that could cause problems." Values
+  transcribed verbatim from the real migrated `gradient_only` preset
+  (`windows/data/keyboard-presets.json`): `LeftColor` RGB(20,90,230),
+  `RightColor` RGB(200,20,160), `Boundary` 13.5, `Hard`=true,
+  `LeftOverrides`=[backspace,del,f11,f12,ins,prtsc],
+  `RightOverrides`=[backslash,enter,left_arrow,right_ctrl,right_shift],
+  `CustomColors`={space: RGB(79,131,236)}, `Brightness` 0.65.
+- Lightbar: all 3 zones to the user's own explicit RGB(18,46,255) at
+  brightness 100 (NOT the real "BLUE" preset's colors, which turned out
+  on inspection to not even be uniform across zones — zone 2 is a
+  distinct cyan).
+- Then `POST /system/shutdown` (new endpoint, `Endpoints.MapSystem` in
+  `JmaStudio.Service`) — the GUI runs unelevated and the Service runs
+  elevated, so a graceful HTTP-triggered self-shutdown
+  (`IHostApplicationLifetime.StopApplication()`, delayed 300ms so the
+  response finishes flushing first) is the only realistic way for the
+  GUI to end the Service; Windows won't let a lower-integrity process
+  terminate a higher one directly.
+- **Bug found and fixed before this shipped**: all 3 steps above
+  originally shared one try/catch block, so a failure partway through
+  (confirmed live: the Service went down mid-sequence once, see below)
+  silently skipped every step after the failure point — the keyboard
+  gradient landed but the lightbar calls never even ran. Fixed by giving
+  each step its own independent try/catch (`SafeCall`), so every step
+  gets a real attempt regardless of whether an earlier one failed.
+
+**Real crash bug found and fixed live, unrelated to the tray icon
+itself but massively more consequential once the tray icon existed**:
+`Debouncer.cs` (used by every tuning panel's live-apply across the whole
+GUI — Gradient, Reactive Typing, Custom Key Colors, Lightbar zone/
+brightness/reactive-config, Controller Reactive settings) took an
+`Action fire` parameter. Every real call site passes an `async () =>
+await ...()` lambda, which compiles to unsafe `async void` against an
+`Action` parameter — any exception thrown inside (e.g. the Service going
+unreachable mid-session) cannot be caught by the caller and crashes the
+entire process via the WPF Dispatcher. Hit live: the user closed the
+Service's own console window directly (see "known rough edge" below),
+and a still-open Controller Reactive window's live-update timer then hit
+the dead Service and took the whole GUI down — tray icon included, which
+is what actually prompted the "I closed JMA studio and it killed the
+tray icon" report. **Fixed at the root**: changed `Debouncer`'s `fire`
+parameter from `Action` to `Func<Task>` — the exact same lambda syntax
+at every call site compiles to a properly awaitable `Task` against that
+type, so zero call sites needed to change; `Debouncer` now awaits `fire()`
+inside its own try/catch. Also added a global
+`Application.DispatcherUnhandledException` handler in `App.xaml.cs` as a
+backstop for anything this doesn't cover — logged to Debug output only,
+since there's no guaranteed window open to show a toast in.
+
+**Known rough edge, not fixed (inherent to this phase, not a bug)**:
+until Phase 7 registers a real Windows Service, the Service runs in a
+visible elevated console window (`dotnet run --project src\JmaStudio.Service`,
+launched by hand or by this session's restart scripts). Closing that
+console window directly kills the Service outside the tray's control —
+the ONLY foolproof way to end it is the tray's "Close and End Service".
+This will stop being an issue once Phase 7 gives the Service a real,
+windowless OS service registration.
+
+**Default-preset checkmark (same session, follow-on request)**: the
+user asked for a visible marker on whichever keyboard preset card is
+currently the startup default, in `MainWindow`'s Presets panel (main UI
+only, not `LightbarWindow`'s lightbar presets, confirmed explicitly).
+Added `ApiClient.GetDefaultPresetAsync()` (mirrors the existing
+`GetLightbarDefaultPresetAsync()`), `PresetRow` gained an `IsDefault`
+bool, and a green checkmark (`SuccessBrush`) is shown via a `DataTrigger`
+on the card — positioned bottom-right under the delete "x" per a live
+follow-up request (initially top-left).
+
+**Startup-default behavior change (same session, follow-on question)**:
+building the checkmark surfaced a real gap — asked directly, the user's
+mental model was "the default preset is what runs at startup," but the
+actual code only used `AppConfig.DefaultPreset` as a fallback for a
+brand-new install with no `live-keyboard-state.json` yet; every other
+boot resumed whatever was last persisted (settled decision #9), which
+could be a completely different effect (e.g. whatever "Close and End
+Service" last set). **Changed, per the user's explicit go-ahead on this
+recommendation**: the default preset is now applied unconditionally on
+every Service startup, restoring parity with the actual Python reference
+(which has no "resume last state" concept at all — `daemon/server.py`
+always applies `config.json`'s `default_preset` on every boot; the C#
+port's "resume last state" was a mid-port addition that had quietly
+drifted from that). `DaemonState`'s constructor no longer reads
+`liveStateStore` at all (still writes to it on every `SetEffect()` call,
+still useful as a last-known-state record, just no longer consulted at
+startup); `Program.cs`'s resolver was renamed `ResolveStartupFallback` →
+`ResolveStartupEffect` to reflect that it's now authoritative, not a
+fallback. Confirmed live: after this change, a Service restart booted
+directly into "Red Chase" (the checkmarked default) instead of whatever
+had been last active. **Lightbar's equivalent "resume last state"
+behavior (`LightbarController.RestorePersistedState()`) was
+deliberately NOT touched** — the user's question and this fix were both
+scoped to the keyboard only; revisit only if asked.
+
+**Backlogged, explicitly deferred (user's own words: "put the sleep and
+hibernate issue in the backlog")**: answering a direct question about
+sleep/hibernate resilience surfaced a real, previously-unknown gap —
+`Controller.cs` already has auto-reconnect logic for a stale USB handle
+after resume (a known fix ported from the Python side), and `Lightbar`'s
+cached WMI instance already auto-recovers once on failure (added earlier
+this session), but **`Keyboard.cs` has no equivalent at all** — a single
+`HidStream` opened once at `Program.cs` startup with no staleness
+detection or reopen logic. If sleep/resume invalidates the keyboard's
+USB handle (plausible, given the controller is already known to hit
+this), the render loop would silently stop updating the keyboard with no
+recovery (caught by `RenderLoopService`'s own try/catch, so it wouldn't
+crash the Service, just go quietly dark). **Not fixed — do not start
+this without the user raising it again.** If it does come up: mirror
+`Controller.cs`'s pattern (detect a gap/failure, reopen
+`Keyboard.FindLightingDevice()` + `Open()`, swap the stream).
+
 ## Key technical decisions for the scaffold itself
 
 - **Target framework: `net8.0-windows`** across every project in the
@@ -1641,89 +1926,88 @@ final: **48px**, logo image alone, no adjacent text).
    rather than in Phase 4, since it depends on the enable/disable
    plumbing this phase provides — **DONE**, see "Phase 5" above
 6. WPF GUI: replicate existing UX, add Create Preset + dominance-
-   reassert button — **main window, Lightbar window, and Controller
-   Reactive window all DONE** (see "Phase 6" and all "Phase 6
-   continued" sections above). **Only the Diagnostics window remains**
-   (currently a `MessageBox` placeholder). The "Create Preset" flow and
-   the Diagnostics dashboard's emergency-action row (dominance-reassert
-   + switch-to-Python/switch-to-C# buttons) described under settled
-   decision #11 are part of this remaining work, not yet built.
+   reassert button — **all 4 windows DONE** (main, Lightbar, Controller
+   Reactive, Diagnostics — see "Phase 6" and all "Phase 6 continued"
+   sections above). The "Create Preset" flow described under settled
+   decision #11 was never built as its own separate flow — presets are
+   still only created via "Save current as preset" from whatever's
+   live, not a pick-a-kind-then-configure wizard; revisit only if the
+   user asks for it specifically.
+6.5. Tray icon (`TrayIconManager.cs`) — **DONE**, see "Phase 6.5" above.
+   Not in the original phasing list at all; the user added this
+   mid-session, ahead of the installer, since Python's own autostart
+   story is built around the tray icon, not the full GUI window.
 7. Installer (location prompt, consent notice, service registration,
-   GUI autostart, preset data migration) — **explicitly deferred until
-   the Diagnostics window is done**, not scheduled ahead of it
-   (the user asked directly whether installer or polish comes next;
-   answer given and accepted: finish Phase 6 first so the installer
-   ships something complete).
+   GUI autostart, preset data migration) — **next up, not yet started**.
+   Now that the tray icon exists, the GUI's per-user autostart entry
+   should target `JmaStudio.Gui.exe` itself (which starts the tray, per
+   Phase 6.5's architecture) rather than assuming the main window should
+   open automatically — matches Python's own autostart behavior
+   (`start_all.ps1` only ever auto-launches the tray, not `gui.py`).
 
-## Immediate live state as of writing this (2026-09-10, end of fourth Phase 6 session)
+## Immediate live state as of writing this (2026-09-10, end of sixth session)
 
 **This section supersedes every "immediate live state" note above it in
 this file — only trust this one.**
 
 - **The C# `JmaStudio.Service` is running and is the one actually
   driving the user's real hardware right now** — elevated console
-  process, PID 15328 at the time of writing (find it fresh via
-  `Get-NetTCPConnection -LocalPort 8420`). Confirmed live via `GET
-  /status`: `keyboardConnected: true`, `controllerConnected: true` (a
-  real DualSense was connected via USB this session), `currentEffect:
-  "typing_reactive"` with the real "Red Chase" preset's params —
-  deliberately re-applied at the very end of this session after
-  Controller Reactive testing had left it enabled (disabled, then
-  "Red Chase" re-applied explicitly, both confirmed via `GET /status`).
-  Lightbar is on its reactive config's background color (a static
-  blue) since the keyboard→lightbar reactive loop is enabled from the
-  user's real migrated settings — correct/expected, not a leftover
-  test artifact to "fix."
-- **`JmaStudio.Gui` is NOT currently running** — the user closed it
-  themselves after confirming the final 48px logo sizing. To relaunch:
-  `dotnet run --project src/JmaStudio.Gui` from `windows/` (no
-  elevation needed, single-instance-enforced).
-- **The Python stack is fully stopped**, untouched since the previous
-  session's end.
-- **This session's work is being committed at the end of this
-  session**, per the user's explicit request ("update the handoff...
-  then commit and prepare for a manual compaction"). Check `git log`
-  on `csharp-port` to confirm this landed rather than trusting this
-  note alone. Files touched this session: `Lightbar.cs` (WMI perf
-  fixes), `LightbarController.cs`/`Endpoints.cs`/`Program.cs`/
-  `RequestModels.cs` (new lightbar-reactive + controller-reactive-
-  defaults endpoints), a new `LightbarReactiveManager.cs`, and on the
-  GUI side `ApiClient.cs`, `App.xaml` (icon/logo assets registered),
-  `MainWindow.xaml`/`.xaml.cs` (logo swap, `WindowPlacement` retrofit),
-  plus new files `ColorWheelPicker.cs`, `LightbarIllustration.cs`,
-  `LightbarWindow.xaml`/`.xaml.cs`/`.Presets.cs`/`.Reactive.cs`,
-  `ControllerReactiveWindow.xaml`/`.xaml.cs`, `ScrollBehavior.cs`
-  (extracted from `MainWindow`), `WindowPlacement.cs`, and
-  `Assets/app_icon.ico`/`Assets/logo.png`.
-- **Explicit, settled next-up plan, per the user's own original
-  ordering**: Lightbar (DONE) → Controller Reactive (DONE) →
-  **Diagnostics (not started — this is the only remaining Phase 6
-  window)**. After Diagnostics, the user's own stated plan is Phase 7
-  (installer), explicitly not before.
-- **One backlogged, NOT-fixed known issue** — see "Phase 6 continued:
-  Lightbar window" above in full before touching it: an all-zone
-  lightbar flash (keyboard zone 4) still shows zone 1 slightly out of
-  sync with zones 2/3 on real hardware. Two real perf fixes already
-  landed this session (WMI instance/parameter-template caching,
-  parallelized zone writes) and neither fully solved this specific
-  symptom (though the *overall* reactive lag they targeted is
-  confirmed fixed). **Do not attempt a third fix without new
-  measured evidence** — the user explicitly asked to stop debugging
-  this and move on, twice already re-litigating it would go against
-  that direct instruction.
-- **Start here next time, in this order**: (1) read the "Phase 6
-  continued: Lightbar window", "...Controller Reactive window", and
-  "...window placement + owner-focus fixes" sections above before
-  writing any new GUI code — the `ColorSwatchButton`/`Debouncer`/
-  `_uiReady`/`_suppressLiveApply`/implicit-dark-control-style/
-  `WindowPlacement` patterns are meant to be reused for the Diagnostics
-  window too, not reinvented; (2) confirm current live state fresh
-  (service/GUI/Python process status, current effect) rather than
-  trusting this note blindly, since time may have passed; (3) build
-  the Diagnostics window — settled decision #11 above has the full
-  design proposal (3 emergency buttons with UAC shields + install-
-  detection gating, plus a menu of additional dashboard content to
-  pick from), verify it live, get explicit user confirmation; (4) only
-  after Diagnostics is done and confirmed, move to Phase 7 (installer)
-  — don't jump ahead to it, and don't revisit the backlogged lightbar
-  zone-sync issue without the user raising it first.
+  process (`dotnet run --project src\JmaStudio.Service`, launched from
+  an elevated PowerShell window), PID 19188 at the time of writing (find
+  it fresh via `Get-NetTCPConnection -LocalPort 8420` or `netstat -ano |
+  findstr :8420`). Confirmed live via `GET /status`: `keyboardConnected:
+  true`, `controllerConnected: true`, `currentEffect: "typing_reactive"`
+  with the real "Red Chase" preset's params — this is the checkmarked
+  startup default, confirmed booted automatically after the
+  always-apply-default fix (see "Phase 6.5" above), not manually
+  re-applied. `JmaStudio.Gui.exe` is also running (PID varies per
+  relaunch this session — find via `tasklist /FI "IMAGENAME eq
+  JmaStudio.Gui.exe"`), with its tray icon active.
+- **The Python stack is fully stopped**, untouched since earlier
+  sessions.
+- **Files touched this session, on top of the fifth session's
+  Diagnostics-window changes**: `LatencyStats.cs` (small
+  `PredatorSense`-vs-`PredatorSenseService` fix folded in), new files
+  `TrayIconManager.cs`, plus edits to `App.xaml`/`App.xaml.cs`
+  (`ShutdownMode`, `IsShuttingDown`, `DispatcherUnhandledException`
+  safety net, constructs `TrayIconManager`), `MainWindow.xaml.cs`
+  (`Closing` → hide-to-tray, `PresetRow` gained `IsDefault`,
+  `RefreshPresetsAsync`/`SetDefaultBtn_Click` updated), `MainWindow.xaml`
+  (green checkmark on the default preset's card), `ApiClient.cs`
+  (`GetDefaultPresetAsync`, `SetAllWhiteAsync`, `ShutdownServiceAsync`),
+  `Debouncer.cs` (the `Action`→`Func<Task>` crash fix — read this one
+  before touching ANY debounced live-apply panel), `JmaStudio.Gui.csproj`
+  (new `System.Management` package reference, for the tray's
+  active-stack process scan). Service side:
+  `Endpoints.cs`/`Program.cs` (`MapSystem`/`/system/shutdown`),
+  `DaemonState.cs`/`Program.cs` (`ResolveStartupFallback` →
+  `ResolveStartupEffect`, now authoritative every boot, not just a
+  fresh-install fallback).
+- **Explicit next-up plan**: Phase 7 (installer) — see "Suggested
+  phasing" item 7 above for what changed there (GUI autostart should
+  target `JmaStudio.Gui.exe` itself, which starts the tray, not assume
+  the main window auto-opens).
+- **Two backlogged, NOT-fixed known issues** — do not start on either
+  without the user raising it again:
+  1. See "Phase 6 continued: Lightbar window" above: an all-zone
+     lightbar flash (keyboard zone 4) still shows zone 1 slightly out
+     of sync with zones 2/3 on real hardware. Two real perf fixes
+     already landed and neither fully solved this specific symptom.
+  2. See "Phase 6.5: Tray icon" above: `Keyboard.cs` has no
+     sleep/hibernate reconnect logic, unlike `Controller.cs` (which
+     already has this) and `Lightbar` (which already auto-recovers its
+     cached WMI instance once on failure). If sleep/resume invalidates
+     the keyboard's USB HID handle, the render loop would silently stop
+     updating it with no recovery.
+- **Start here next time**: (1) confirm current live state fresh
+  (Service/GUI process status, current effect, tray icon present)
+  rather than trusting this note blindly, since time may have passed;
+  (2) read "Phase 6.5: Tray icon" in full, especially the `Debouncer`
+  fix and the "Close and End Service" design, before touching anything
+  GUI-related — the crash-safety fixes there apply to the whole app,
+  not just the tray; (3) begin Phase 7 (installer) — location prompt,
+  self-contained `win-x64` publish, explicit AcerLightingService-disable
+  notice, real Windows Service registration, GUI/tray autostart
+  (targeting `JmaStudio.Gui.exe`, per the note above), preset data
+  migration; (4) don't revisit either backlogged item above without the
+  user raising it first.

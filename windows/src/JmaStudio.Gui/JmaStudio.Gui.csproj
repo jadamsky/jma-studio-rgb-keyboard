@@ -45,6 +45,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Diagnostics window's emergency-action gating: a cheap process-
+         list scan (Win32_Process CommandLine) to tell which stack
+         (Python vs. C#) is currently the one actually driving hardware,
+         independent of whether this GUI's own Service is reachable. -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\JmaStudio.Hardware\JmaStudio.Hardware.csproj" />
     <ProjectReference Include="..\JmaStudio.Effects\JmaStudio.Effects.csproj" />
     <ProjectReference Include="..\JmaStudio.Presets\JmaStudio.Presets.csproj" />

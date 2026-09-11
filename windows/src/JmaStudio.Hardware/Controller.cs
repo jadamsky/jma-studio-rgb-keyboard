@@ -99,6 +99,12 @@ public sealed class Controller : IDisposable
         return new Controller(stream);
     }
 
+    /// <summary>Cheap presence-only probe for the Diagnostics window's
+    /// "Re-scan hardware" button -- distinct from a running Controller's
+    /// own IsConnected (reflects a currently-open handle's live read
+    /// health), this re-enumerates USB devices right now.</summary>
+    public static bool IsPresent() => FindControllerDevice() is not null;
+
     private static HidDevice? FindControllerDevice()
     {
         foreach (int productId in ProductIds)

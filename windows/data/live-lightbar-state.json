@@ -1,11 +1,27 @@
 {
-  "Mode": "Neon",
+  "Mode": null,
   "ModeColor": {
-    "R": 0,
-    "G": 8,
-    "B": 255
+    "R": 255,
+    "G": 0,
+    "B": 0
   },
   "ModeSpeed": 5,
-  "ZoneColors": null,
+  "ZoneColors": {
+    "1": {
+      "R": 18,
+      "G": 46,
+      "B": 255
+    },
+    "2": {
+      "R": 18,
+      "G": 46,
+      "B": 255
+    },
+    "3": {
+      "R": 18,
+      "G": 46,
+      "B": 255
+    }
+  },
   "Brightness": 100
 }

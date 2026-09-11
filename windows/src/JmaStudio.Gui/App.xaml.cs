@@ -2,6 +2,14 @@
 // _focus_existing_instance(): a named Mutex detects an already-running
 // instance, and rather than opening a duplicate window, this focuses the
 // existing one and exits immediately.
+//
+// Also owns the tray icon (TrayIconManager) -- see that file's header
+// comment for the full design. ShutdownMode is OnExplicitShutdown (set
+// in App.xaml) since closing MainWindow now hides it rather than
+// exiting the app (see MainWindow's Closing handler) -- the app only
+// really exits via the tray's "Close and End Service", which sets
+// IsShuttingDown first so MainWindow's Closing handler lets the real
+// close through instead of cancelling it.
 
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -21,6 +29,13 @@ public partial class App : Application
     // Same failure mode gui.py's own _acquire_single_instance_lock()
     // documents hitting and fixing the same way.
     private Mutex? _instanceMutex;
+    private TrayIconManager? _trayIcon;
+
+    /// <summary>True only while the tray's "Close and End Service" is
+    /// actually tearing the app down. MainWindow.Closing checks this to
+    /// tell a real shutdown-driven close apart from the user clicking
+    /// the window's own X button (which should just hide it).</summary>
+    public static bool IsShuttingDown { get; set; }
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -31,7 +46,30 @@ public partial class App : Application
             Environment.Exit(0);
             return;
         }
+
+        // Safety net for anything Debouncer.cs's fix doesn't already
+        // cover (a genuinely unexpected bug, not just a transient
+        // Service-unreachable moment). Before the tray icon existed, an
+        // unhandled exception crashing the app just meant re-opening a
+        // window; now it also silently kills the tray icon the user
+        // relies on as their "is the Service still running" signal, so
+        // this app should never crash from a routine exception if it can
+        // help it. Logged to Debug output rather than shown to the user
+        // -- there's no guaranteed window open to show a toast in.
+        DispatcherUnhandledException += (_, ex) =>
+        {
+            System.Diagnostics.Debug.WriteLine($"[UnhandledException] {ex.Exception}");
+            ex.Handled = true;
+        };
+
         base.OnStartup(e);
+        _trayIcon = new TrayIconManager(new ApiClient());
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _trayIcon?.Dispose();
+        base.OnExit(e);
     }
 
     private static void FocusExistingInstance()

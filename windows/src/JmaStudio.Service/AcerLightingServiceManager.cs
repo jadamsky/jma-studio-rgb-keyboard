@@ -42,6 +42,33 @@ public static class AcerLightingServiceManager
         SetStartupDisabled();
     }
 
+    /// <summary>Live status for the Diagnostics window's service-health
+    /// panel -- should always read ("Stopped", "Disabled") once this
+    /// service has run at least once; the panel surfaces anything else
+    /// as a red flag (settled decision #11's "surface it going
+    /// green->red if it's ever found running" ask).</summary>
+    public static (string Status, string StartMode) GetStatus()
+    {
+        using ServiceController? controller = TryGetController();
+        if (controller is null) return ("NotFound", "NotFound");
+
+        string startMode = "Unknown";
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                $"SELECT StartMode FROM Win32_Service WHERE Name='{TargetServiceName}'");
+            foreach (ManagementBaseObject result in searcher.Get())
+            {
+                startMode = result["StartMode"]?.ToString() ?? "Unknown";
+            }
+        }
+        catch
+        {
+            // Best-effort -- status alone is still useful without this.
+        }
+        return (controller.Status.ToString(), startMode);
+    }
+
     private static ServiceController? TryGetController()
     {
         try
