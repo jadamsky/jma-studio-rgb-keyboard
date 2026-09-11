@@ -217,7 +217,7 @@ begin
     'Acer Lighting Service', 'This installer needs to disable a Windows service',
     'JMA Studio needs full control of your keyboard and rear lightbar lighting. To do that, it will stop AcerLightingService (the service behind Acer''s own PredatorSense lighting controls) and set its startup type to Disabled -- permanently, across reboots, until you uninstall JMA Studio or re-enable it yourself.' + #13#10 + #13#10 +
     'This does not affect any other PredatorSense feature -- only its lighting control.' + #13#10 + #13#10 +
-    'This is reversible: uninstalling JMA Studio re-enables AcerLightingService automatically.',
+    'This is reversible: uninstalling JMA Studio will offer to re-enable AcerLightingService.',
     False, False);
   ConsentPage.Add('I understand, and want to continue.');
   ConsentPage.Values[0] := False;
@@ -273,6 +273,26 @@ begin
   Exec('sc.exe', 'start {#ServiceName}', '', SW_HIDE, ewNoWait, ResultCode);
 end;
 
+// Disables (does NOT delete) the Python version's own "JMA Studio
+// Autostart" Scheduled Task, if present -- best-effort, silent no-op on
+// the vast majority of machines that never had the Python version
+// installed at all. Real incident that motivated this: on the author's
+// own dev machine (which still has this task from before the C# port),
+// this task launches Python's daemon+tray+gui at every logon regardless
+// of whether JMA Studio C# is installed -- if both are ever enabled to
+// autostart at once, they fight over the same hardware (a known,
+// previously-hit bug: flickering/color-bleeding, see this project's
+// earlier session history). Disabling rather than deleting keeps this
+// fully reversible: the Diagnostics window's "Switch to Python" button
+// (DiagnosticsManager.cs) already re-enables this exact task by name
+// when a user deliberately switches stacks.
+procedure DisablePythonAutostartIfPresent();
+var
+  ResultCode: Integer;
+begin
+  Exec('schtasks.exe', '/Change /TN "JMA Studio Autostart" /Disable', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 // ---- default data seeding: only on a genuine fresh install (the
 // ProgramData data dir doesn't exist yet at all) -- never on an
 // upgrade, so an existing install's edited presets are never clobbered.
@@ -313,16 +333,29 @@ begin
   begin
     SeedDefaultDataIfMissing();
     InstallService();
+    DisablePythonAutostartIfPresent();
   end;
 end;
 
-// ---- uninstall: stop+remove the service, ask about user data, and
-// re-enable AcerLightingService (no separate prompt for that -- the
-// user only asked about data; automatically undoing the install-time
-// disable is the safer default so a fresh uninstall doesn't leave
-// PredatorSense's lighting permanently broken with no obvious cause). ----
+// ---- uninstall: stop+remove the service, ask about user data, and ask
+// whether to re-enable AcerLightingService. ----
+// Originally this re-enabled AcerLightingService unconditionally, no
+// prompt -- reasoning at the time: undoing the install-time disable by
+// default is safer than leaving a typical end user's lighting broken
+// with no obvious cause. Changed after a real live incident: on the
+// author's own dev machine, uninstalling silently re-enabled
+// AcerLightingService, and a still-enabled pre-existing "JMA Studio
+// Autostart" Scheduled Task (Python's own autostart, predating this C#
+// port, NOT managed by this installer) then re-stopped it again moments
+// later at its own daemon startup -- confusing, and pointless work for
+// anyone with another lighting controller already in charge. Most real
+// end users won't have that Python fallback, so defaulting the prompt
+// itself towards Yes still matches the original reasoning; the
+// difference is asking first rather than assuming.
 var
   KeepUserData: Boolean;
+  ReEnableAcerService: Boolean;
+  ReEnablePythonAutostart: Boolean;
 
 // Polls for a file to become deletable (i.e. its owning process has
 // actually released its handle) instead of guessing a fixed delay.
@@ -351,10 +384,45 @@ begin
 end;
 
 function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
 begin
   KeepUserData := (MsgBox('Keep your JMA Studio presets and configuration (' + AppDataRoot() + ')?' + #13#10#13#10 +
     'Choose Yes to keep them for a future reinstall, or No to delete them now.',
     mbConfirmation, MB_YESNO) = IDYES);
+
+  // Verify AcerLightingService actually exists on this machine before
+  // even asking -- `sc query` exits with 1060 (ERROR_SERVICE_DOES_NOT_EXIST)
+  // if it's absent (not a PH16-71, or it was never installed), in which
+  // case there's nothing to ask about at all.
+  ReEnableAcerService := False;
+  Exec('sc.exe', 'query AcerLightingService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if ResultCode <> 1060 then
+  begin
+    ReEnableAcerService := (MsgBox('JMA Studio disabled Acer''s own PredatorSense lighting service (AcerLightingService) when it was installed, so it could take full control of your keyboard and lightbar lighting.' + #13#10#13#10 +
+      'Would you like to re-enable it now and set it back to Automatic startup?' + #13#10#13#10 +
+      'Choose Yes if nothing else is controlling this hardware''s lighting, or No to leave it disabled.',
+      mbConfirmation, MB_YESNO) = IDYES);
+  end;
+
+  // Symmetric with the AcerLightingService prompt above: only ask if the
+  // Python version's own autostart task actually exists on this machine
+  // at all (schtasks /Query exits 0 if found, nonzero otherwise) --
+  // silent no-op on the vast majority of machines that never had the
+  // Python version installed. Doesn't check whether it's currently
+  // Enabled/Disabled first (that would need parsing schtasks' own text
+  // output); re-enabling an already-enabled task via /Enable is a
+  // harmless no-op, so this stays simple.
+  ReEnablePythonAutostart := False;
+  Exec('schtasks.exe', '/Query /TN "JMA Studio Autostart"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if ResultCode = 0 then
+  begin
+    ReEnablePythonAutostart := (MsgBox('A Scheduled Task for the Python version of JMA Studio ("JMA Studio Autostart") was found on this machine.' + #13#10#13#10 +
+      'Would you like to re-enable it now, so the Python version starts automatically again at your next login?' + #13#10#13#10 +
+      'Choose Yes if you''d like the Python version to take back over, or No to leave it as it is.',
+      mbConfirmation, MB_YESNO) = IDYES);
+  end;
+
   Result := True;
 end;
 
@@ -383,14 +451,40 @@ begin
     WaitForFileUnlocked(ExpandConstant('{app}\Service\JmaStudio.Service.exe'), 40, 250);
     WaitForFileUnlocked(ExpandConstant('{app}\Gui\JmaStudio.Gui.exe'), 40, 250);
     Exec('sc.exe', 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    // Best-effort -- a no-op if AcerLightingService isn't present on
-    // this machine (not a PH16-71, or it was never installed).
-    Exec('sc.exe', 'config AcerLightingService start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec('sc.exe', 'start AcerLightingService', '', SW_HIDE, ewNoWait, ResultCode);
+    // Only if the user said Yes in InitializeUninstall's prompt above --
+    // see that function's comment for why this is no longer unconditional.
+    if ReEnableAcerService then
+    begin
+      Exec('sc.exe', 'config AcerLightingService start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec('sc.exe', 'start AcerLightingService', '', SW_HIDE, ewNoWait, ResultCode);
+    end;
+    // Only if the user said Yes in InitializeUninstall's prompt above.
+    if ReEnablePythonAutostart then
+    begin
+      Exec('schtasks.exe', '/Change /TN "JMA Studio Autostart" /Enable', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    end;
   end;
 
-  if (CurUninstallStep = usPostUninstall) and (not KeepUserData) then
+  if CurUninstallStep = usPostUninstall then
   begin
-    DelTree(AppDataRoot(), True, True, True);
+    if not KeepUserData then
+    begin
+      DelTree(AppDataRoot(), True, True, True);
+    end;
+
+    // Confirmed live: {app}\Service and {app}\Gui were left behind as
+    // empty directories after a real uninstall test, even though both
+    // exe files inside them were successfully removed -- WaitForFileUnlocked
+    // above deletes those files itself (via DeleteFile), ahead of Inno's
+    // own built-in file-removal pass, which apparently breaks Inno's
+    // normal "remove the directory once nothing's left in it" bookkeeping
+    // (it never sees itself perform the deletion, so its own auto-cleanup
+    // for that directory never triggers). RemoveDir only succeeds on an
+    // actually-empty directory and fails silently otherwise, so this is
+    // safe to call unconditionally regardless of whether the fix above
+    // was even needed this time.
+    RemoveDir(ExpandConstant('{app}\Service'));
+    RemoveDir(ExpandConstant('{app}\Gui'));
+    RemoveDir(ExpandConstant('{app}'));
   end;
 end;

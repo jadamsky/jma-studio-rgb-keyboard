@@ -2222,6 +2222,116 @@ page) rather than another one-shot class guess at `CurPageChanged` time.
 The `Log(Name)` diagnostic pattern used to find the real control names
 here is worth reusing directly if this is picked back up.
 
+### Uninstall re-enabling AcerLightingService caused Python to silently take back over (2026-09-11, eleventh session) — fixed, NOT yet live-tested
+
+Real incident, reported directly by the user the morning after the
+tenth session's restart test: they ran the uninstaller, rebooted, and
+found the Python version running and controlling the hardware instead
+of a clean/expected state. **Root cause confirmed via live evidence
+before touching any code** (`schtasks //query //tn "JMA Studio
+Autostart" //v //fo list`, `sc query AcerLightingService`, `tasklist`):
+this has nothing to do with the C# installer/uninstaller directly. A
+pre-existing Scheduled Task, **"JMA Studio Autostart"** (Python's own
+autostart, `Schedule Type: At logon time`, predates this entire C# port
+project, never managed by `JmaStudio.iss` at all), was still `Enabled`
+and fired at login exactly as it always would have. Separately,
+confirmed `AcerLightingService`'s `START_TYPE` WAS correctly set back to
+`AUTO_START` by the uninstaller (working as designed at the time), but
+its actual `STATE` was `STOPPED` — Python's own daemon re-stopped it
+again at ITS OWN startup (the same "cheap insurance" pattern settled
+decision #10 gives the C# Service, mirrored on the Python side). So the
+full picture: uninstalling C# re-enabled `AcerLightingService`
+unconditionally (original design), then the still-enabled Python task
+fired at the next login regardless, and Python's daemon immediately
+re-disabled `AcerLightingService` itself — from the user's point of
+view this looked like "the uninstall reinstated the Python version,"
+but the uninstaller's OWN actions (re-enabling AcerLightingService)
+were actually incidental to that, not the direct cause.
+
+**User's explicit read on this, framing why the fix should still be an
+ask, not silence**: "anyone other than me will probably not have the
+python version" — i.e. this exact incident is dev-machine-specific
+(only this machine has the leftover Python install + task from before
+the port), but the general principle (ask before silently flipping a
+service's state back on) is a good improvement regardless of cause.
+
+**Three related changes made, all compiled cleanly, NONE live-tested
+yet** (the user chose "leave it as-is for now" rather than doing another
+install/uninstall cycle this session — Python is currently the active
+stack on this machine, C# is currently fully uninstalled, and that's
+the user's deliberate choice, not an accident to fix):
+1. **`AcerLightingService` re-enable is now a prompt, not automatic.**
+   `InitializeUninstall()` now checks the service actually exists first
+   (`sc query AcerLightingService`, exit code `1060` =
+   `ERROR_SERVICE_DOES_NOT_EXIST` means skip the prompt entirely — most
+   machines), then asks "Would you like to re-enable it now?" via
+   `MsgBox`, storing the answer in a new `ReEnableAcerService: Boolean`
+   acted on later in `CurUninstallStepChanged(usUninstall)`. Same
+   defer-to-`usUninstall` pattern the existing `KeepUserData` prompt
+   already uses. The `ConsentPage` welcome-screen text (which promised
+   "uninstalling JMA Studio re-enables AcerLightingService
+   automatically") was updated to match ("...will offer to re-enable
+   AcerLightingService").
+2. **New: the C# installer now disables (never deletes) Python's "JMA
+   Studio Autostart" task on install**, via a new
+   `DisablePythonAutostartIfPresent()` procedure (`schtasks.exe /Change
+   /TN "JMA Studio Autostart" /Disable`), called from
+   `CurStepChanged(ssPostInstall)` right after `InstallService()`.
+   Silent no-op (schtasks just fails harmlessly) on the vast majority of
+   machines that never had the Python version at all. Explicitly
+   **disable, not delete** — keeps this reversible via the Diagnostics
+   window's existing "Switch to Python" button
+   (`DiagnosticsManager.cs`), which already re-enables this exact task
+   by name when a user deliberately switches stacks (Phase 6 continued:
+   Diagnostics window, above). This directly prevents the OTHER known
+   failure mode this project already hit and fixed once before (two
+   processes fighting over the same keyboard, flickering/color-bleeding)
+   from ever recurring after a fresh C# install on a machine that
+   happens to have both versions present.
+3. **Symmetric addition, per explicit user confirmation when asked**:
+   uninstalling C# now ALSO offers to re-enable the Python autostart
+   task (not just AcerLightingService) — same existence-check-then-ask
+   pattern (`schtasks //Query //TN "JMA Studio Autostart"`, exit code 0
+   means it exists), new `ReEnablePythonAutostart: Boolean`, acted on in
+   `CurUninstallStepChanged(usUninstall)` via `schtasks.exe /Change /TN
+   "JMA Studio Autostart" /Enable`. Deliberately does NOT check whether
+   the task is currently Enabled/Disabled first (would need parsing
+   `schtasks`' text output, more complexity than this is worth) —
+   re-enabling an already-enabled task is a harmless no-op.
+
+**All four now confirmed live** (same session, after the user manually
+stopped Python and asked to actually run the test): installed fresh —
+`JMA Studio Autostart` task confirmed `Disabled` immediately after
+install (`schtasks //query`); uninstalled with both `JmaStudioService`
+and `JmaStudio.Gui.exe` genuinely running — the `AcerLightingService`
+prompt appeared, user chose Yes, and manually confirmed PredatorSense
+regained real control afterward; the Python-autostart prompt also
+appeared (user saw it, chose not to re-enable it this time); `Service/`
+and `Gui/` folders both came back completely empty (zero leftover
+`.exe` files) confirming the ninth session's `WaitForFileUnlocked`/GUI
+`taskkill` fixes ALSO hold up under a second real test.
+
+**One more real bug found and fixed via this same test, live, before
+being asked to check for it** — the user's own words: "it is a pet
+peeve of mine when an uninstaller leaves empty folders." `{app}\Service`
+and `{app}\Gui` (and the `{app}` root itself) were left behind as empty
+directories after that uninstall, even though every file inside them
+was gone. Root cause: `WaitForFileUnlocked` deletes the `.exe` files
+itself via `DeleteFile()`, ahead of Inno's own built-in file-removal
+pass — Inno's normal "remove a directory once nothing's left in it"
+auto-cleanup apparently only triggers when INNO itself performs the
+final deletion, not when a script deletes the file out from under it
+first. **Fixed**: added explicit `RemoveDir()` calls for `{app}\Service`,
+`{app}\Gui`, and `{app}` itself in `usPostUninstall` (safe to call
+unconditionally — `RemoveDir` only succeeds on a genuinely empty
+directory, silently fails otherwise). **Re-verified with a full third
+install/uninstall cycle**: `C:\Program Files\JMA Studio\` confirmed
+completely absent afterward (not even present as an empty directory).
+Machine was then reinstalled a final time via the same `Setup.exe`,
+confirmed running cleanly (`Red Chase` active, `AcerLightingService`
+Stopped/Disabled) — this is the state the machine is in as of this
+writing.
+
 ### Settled decision #2 — annotation, not a reversal
 
 Settled decision #2 ("Windows Service, not Scheduled Task") stays
@@ -2392,6 +2502,61 @@ service was tested for the first time this session.
    two uninstall fixes with an actual uninstall test, and a backlogged
    (do-not-reattempt-without-new-evidence) theming bug on the Restart
    Manager "Preparing to Install" page.
+
+## Immediate live state as of writing this (2026-09-11, end of eleventh session)
+
+**This section supersedes every "immediate live state" note above it in
+this file — only trust this one.**
+
+- **JMA Studio C# is installed and running cleanly** — the user
+  manually stopped Python, then this session ran a full three-cycle
+  install → uninstall → install → uninstall → install test loop against
+  this exact machine (which has both `AcerLightingService` and the
+  Python autostart task present, a good real test bed). Every fix from
+  this session is now confirmed live — see "Uninstall re-enabling
+  AcerLightingService..." above for the complete list and evidence:
+  the `AcerLightingService` ask-first prompt (user chose Yes, manually
+  confirmed PredatorSense regained control), the install-time Python-
+  autostart-disable, the uninstall-time Python-autostart-re-enable
+  prompt, and a NEW empty-directory-cleanup fix found and fixed
+  mid-session (found by the user immediately noticing leftover empty
+  `Service`/`Gui`/root folders, fixed with explicit `RemoveDir()` calls,
+  then re-verified clean on a subsequent uninstall cycle).
+- **Final state confirmed**: `JmaStudioService` RUNNING, `JmaStudio.Gui.exe`
+  running (tray icon present), `AcerLightingService` Stopped/Disabled
+  (this install's own startup check correctly re-disabled it —
+  independent of and after the uninstall-time re-enable the user chose
+  in the PRIOR uninstall test), `GET /status` shows "Red Chase"
+  (`typing_reactive`) active, keyboard connected. Python is fully
+  stopped (no `python.exe` processes). This is a genuinely clean,
+  fully-working, fully-tested state — not a leftover test artifact.
+- **`windows/installer/JmaStudio.iss` has all this session's fixes
+  applied and compiled, but is still UNCOMMITTED** as of this writing —
+  see "Start here next time" below.
+- **New this session, also uncommitted**: root `CREDITS.md` updated to
+  extend its existing Venator/Order52 attribution (previously only
+  covering `hardware/device.py`) to also cover
+  `windows/src/JmaStudio.Hardware/Keyboard.cs` on this branch, since the
+  C# port carries forward the exact same reverse-engineered protocol
+  facts (not code) — see CREDITS.md itself for the full wording. Also
+  added a short note crediting the C# port's own agentic build session,
+  pointing to this file.
+- **User's next ask, not yet started**: figure out how to actually get
+  the `csharp-port` branch onto GitHub (`origin` = 
+  `https://github.com/jadamsky/jma-studio-rgb-keyboard.git`) — confirmed
+  via `git branch -a`/`git rev-parse origin/csharp-port` that this
+  branch has NEVER been pushed to origin yet (`main` and `stable` both
+  exist on origin; `csharp-port` doesn't). This needs a real plan/
+  discussion with the user before pushing anything to a public remote —
+  see whatever the next part of this session's transcript settled on,
+  or ask the user directly if this file is being read cold with no
+  further context on that decision.
+- **Start here next time**: (1) confirm current live state fresh (same
+  checks as always) before assuming the above is still true; (2) commit
+  the installer fixes + CREDITS.md update if not already committed
+  (check `git status` — the user asked for this explicitly at the end of
+  this session); (3) follow up on the GitHub push question above if it
+  wasn't resolved.
 
 ## Immediate live state as of writing this (2026-09-11, end of ninth session)
 
