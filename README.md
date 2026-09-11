@@ -23,6 +23,28 @@ replaced machine doesn't mean losing this setup. If you own a PH16-71
 too, it should work for you as-is, but it isn't a polished general
 product.
 
+## Quick start: just want it working? Use the Windows installer
+
+There are two implementations in this repo: the original **Python**
+version (documented below — a venv, a background daemon, a pywebview
+GUI) and a full **C#/.NET port** (`windows/` on the `csharp-port`
+branch) with **no Python runtime at all**: a real Windows Service that
+starts your lighting before you even log in, plus a native WPF GUI and
+tray icon, all wrapped in a real one-click **installer**.
+
+**If you don't want to fiddle with a Python environment, grab the
+latest `JmaStudio-Setup.exe` from
+[Releases](../../releases/latest)** — it's a self-contained installer:
+one UAC prompt, a desktop shortcut, and it's running. No Python, no
+`pip install`, no virtual environment.
+
+See [`windows/HANDOFF.md`](windows/HANDOFF.md) for the C# port's full
+architecture, build history, and how to build the installer yourself
+from source (`windows/installer/build.ps1`) instead of using a prebuilt
+release. Everything below this point documents the original **Python**
+version, still fully supported and the reference implementation the C#
+port was built from.
+
 ## What it does
 
 - **Per-key gradient zones** — replicates (and generalizes to 2–5
