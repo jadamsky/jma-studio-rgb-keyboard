@@ -25,12 +25,25 @@ public sealed class InputListener : IDisposable
     {
         _indexByName = indexByName;
         _hook = new GlobalKeyboardHook();
-        _hook.KeyDown += OnKeyDown;
+        _hook.KeyDown += RecordKeyDown;
     }
 
+    /// <summary>Starts this Service's OWN local hook -- only meaningful
+    /// when the Service happens to be running in the interactive session
+    /// (dev-mode console, not an installed Windows Service). See
+    /// Program.cs's call site: NOT started by default any more, since a
+    /// real installed Service runs in Session 0 and this hook would never
+    /// see interactive-desktop keystrokes there anyway (see HANDOFF.md's
+    /// Phase 7 "Critical finding") -- production key capture now comes
+    /// from JmaStudio.Gui's KeypressForwarder via RecordKeyDown below.</summary>
     public void Start() => _hook.Start();
 
-    private void OnKeyDown(string name)
+    /// <summary>The single entry point for a real keydown, regardless of
+    /// source: this Service's own local hook (dev-mode only, see Start()
+    /// above) OR JmaStudio.Gui's KeypressForwarder via POST /keypress
+    /// (Endpoints.MapInput) -- the production path once the Service runs
+    /// as a real installed Windows Service in Session 0.</summary>
+    public void RecordKeyDown(string name)
     {
         double now = _clock.Elapsed.TotalSeconds;
         lock (_lock)

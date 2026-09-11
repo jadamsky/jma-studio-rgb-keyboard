@@ -133,6 +133,31 @@ public sealed class ApiClient
         }
     }
 
+    // ---- input forwarding (KeypressForwarder) ----
+
+    /// <summary>Forwards one real, already repeat-filtered keydown to the
+    /// Service's InputListener -- see KeypressForwarder.cs and
+    /// Endpoints.MapInput's header comment for why this exists (Session 0
+    /// isolation). Swallows connection failures the same way
+    /// ShutdownServiceAsync does: a missed keystroke here should never
+    /// throw or crash the hook's caller.</summary>
+    public async Task<bool> PostKeypressAsync(string key)
+    {
+        try
+        {
+            var response = await _http.PostAsJsonAsync("/keypress", new { Key = key }, Json);
+            return response.IsSuccessStatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (TaskCanceledException)
+        {
+            return false;
+        }
+    }
+
     public async Task<bool> ApplyEffectDefaultAsync(string name) =>
         (await _http.PostAsync($"/effects/{Uri.EscapeDataString(name)}/apply-default", null)).IsSuccessStatusCode;
 

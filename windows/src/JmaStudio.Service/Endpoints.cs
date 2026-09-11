@@ -7,10 +7,16 @@
 // those) -- this is a NEW client's API surface, not a compatibility layer.
 //
 // Route coverage is deliberately a solid CORE subset, not an exhaustive
-// mirror of every Python endpoint (e.g. no /keypress forwarding path --
-// WPF's native controls don't have WebView2's focus-stealing problem, so
-// this hasn't been needed) -- see windows/HANDOFF.md's Phase 5/6 sections
-// for the explicit list of what's NOT here yet.
+// mirror of every Python endpoint -- see windows/HANDOFF.md's Phase 5/6
+// sections for the explicit list of what's NOT here yet.
+//
+// POST /keypress (MapInput, below) WAS added for a different reason than
+// Python's /keypress (WebView2 focus-stealing): a real installed Windows
+// Service runs in Session 0, which cannot see interactive-desktop
+// keystrokes at all (Session 0 Isolation) -- so JmaStudio.Gui's
+// KeypressForwarder captures the global hook instead (it runs in the
+// interactive session) and forwards each real keydown here. See
+// HANDOFF.md's Phase 7 "Critical finding" for the full story.
 
 using JmaStudio.Effects;
 using JmaStudio.Hardware;
@@ -361,6 +367,25 @@ public static class Endpoints
             using var reader = new StreamReader(stream);
             string[] all = reader.ReadToEnd().Split('\n');
             return Results.Ok(new { lines = all.Skip(Math.Max(0, all.Length - n)).ToArray() });
+        });
+    }
+
+    /// <summary>Receives forwarded real keydowns from JmaStudio.Gui's
+    /// KeypressForwarder -- see this file's header comment and
+    /// HANDOFF.md's Phase 7 "Critical finding" for why this exists (a
+    /// real installed Windows Service runs in Session 0 and cannot see
+    /// interactive-desktop keystrokes directly). The GUI already filters
+    /// auto-repeat before forwarding, so every call here is a genuine new
+    /// keydown transition; this just funnels into the exact same
+    /// InputListener.RecordKeyDown the Service's own (dev-mode-only)
+    /// local hook calls, so typing_reactive/lightbar-reactive can't tell
+    /// the two sources apart.</summary>
+    public static void MapInput(WebApplication app, InputListener inputListener)
+    {
+        app.MapPost("/keypress", (KeypressRequest req) =>
+        {
+            inputListener.RecordKeyDown(req.Key);
+            return Results.Ok();
         });
     }
 

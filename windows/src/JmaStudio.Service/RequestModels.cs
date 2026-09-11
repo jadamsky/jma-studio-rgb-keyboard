@@ -10,3 +10,4 @@ public sealed record LightbarBrightnessRequest(int Value);
 public sealed record DefaultRequest(string Name);
 public sealed record LightbarReactiveConfigRequest(
     bool Enabled, RgbColor BackgroundColor, IReadOnlyDictionary<int, RgbColor> ZoneFlashColors, RgbColor AllFlashColor);
+public sealed record KeypressRequest(string Key);

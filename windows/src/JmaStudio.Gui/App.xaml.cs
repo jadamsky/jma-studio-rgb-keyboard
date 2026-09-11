@@ -30,6 +30,7 @@ public partial class App : Application
     // documents hitting and fixing the same way.
     private Mutex? _instanceMutex;
     private TrayIconManager? _trayIcon;
+    private KeypressForwarder? _keypressForwarder;
 
     /// <summary>True only while the tray's "Close and End Service" is
     /// actually tearing the app down. MainWindow.Closing checks this to
@@ -64,10 +65,22 @@ public partial class App : Application
 
         base.OnStartup(e);
         _trayIcon = new TrayIconManager(new ApiClient());
+
+        // Phase 7 fix (see HANDOFF.md's "Critical finding"): a real
+        // installed Windows Service runs in Session 0 and can't see
+        // interactive-desktop keystrokes, so this GUI captures the
+        // global keyboard hook itself and forwards real keydowns to the
+        // Service over POST /keypress. Runs for the whole GUI lifetime,
+        // same as the tray icon -- not tied to MainWindow being visible,
+        // since the point is for reactive effects to work even while the
+        // window is hidden in the tray.
+        _keypressForwarder = new KeypressForwarder(new ApiClient());
+        _keypressForwarder.Start();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _keypressForwarder?.Dispose();
         _trayIcon?.Dispose();
         base.OnExit(e);
     }

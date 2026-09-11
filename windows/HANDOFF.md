@@ -28,34 +28,40 @@ re-litigate those; they're final unless the user reopens them.
 ## Current status
 
 **Phases 1-6 — DONE. Phase 6.5 (tray icon) — DONE. Phase 7 (installer)
-— IN PROGRESS, one critical bug blocking completion.** Read **"Phase 7:
-Installer — IN PROGRESS, one critical bug blocking (2026-09-10, seventh
-session)"** (the newest section, right before "Key technical decisions")
-before doing ANYTHING else in this project — it documents a real,
-previously-unknown architecture problem (Session 0 isolation breaks
-`typing_reactive`/lightbar-reactive when the Service runs as a real
-Windows Service) found via live installer testing, and the planned fix
-(move key capture into the GUI, forward via a new endpoint). **The user
-has explicitly authorized starting this fix immediately on a fresh
-session** — if you're reading this cold because the user said something
-like "read the windows handoff doc and continue," that IS the
-go-ahead: begin building the `/keypress` fix described in "Phase 7"
-below without asking again. The installer itself (packaging, service
-registration, data seeding, uninstall) is otherwise built and
-live-tested working. Before
-that, read "Phase 6.5: Tray icon (2026-09-10, sixth session)" for the
-tray icon scope addition, a real crash bug found and fixed live, a
-startup-behavior change (the checkmarked default preset now applies on
-every boot, not just a fresh install), and one explicitly backlogged
-gap (keyboard sleep/hibernate resilience — do not start on this without
-the user raising it again). Every one of Phase 6's 4 windows (main,
-Lightbar, Controller Reactive, Diagnostics) plus the Phase 6.5 tray icon
-are all built and user-confirmed working. Real hardware control
-confirmed live for keyboard, lightbar, AND controller. **Check
-"Immediate live state" at the very end of this file for exactly what's
-running right now** — don't rely on any of the older "immediate live
-state" language earlier in this file, only the bottommost section is
-current.
+— FUNCTIONALLY COMPLETE as of the tenth session.** Read **"Phase 7:
+Installer"** below (right before "Key technical decisions") for the
+full story: a real, previously-unknown architecture problem (Session 0
+isolation breaks `typing_reactive`/lightbar-reactive when the Service
+runs as a real Windows Service), found via live installer testing, then
+fixed in an eighth session by moving key capture into `JmaStudio.Gui`
+and forwarding over a new `POST /keypress` endpoint, user-confirmed
+working live ("I just tested your live update, it works" — see "Fix
+built and verified (2026-09-10, eighth session)"). A ninth session
+found and fixed 2 real uninstall bugs (not yet re-verified) and hit one
+backlogged theming bug (3 fix attempts failed, do not re-attempt
+without new evidence). A tenth session tested real sleep/hibernate/
+restart resilience: sleep passed clean, hibernate found one WON'T-FIX
+cosmetic gap (user declined the fix), and restart passed clean —
+closing out the last open question with the user's own unprompted
+observation that boot-time lighting now beats PredatorSense's own
+timing ("the keyboard and backlight background colors pickup faster
+th[a]n the predator sense software ever did... GOOD JOB"). See
+"Immediate live state" at the end of this file for the precise
+remaining (non-blocking) loose ends. Before all that, read "Phase 6.5:
+Tray icon (2026-09-10, sixth session)" for the tray icon scope
+addition, a real crash bug found and fixed live, a startup-behavior
+change (the checkmarked default preset now applies on every boot, not
+just a fresh install), and one explicitly backlogged gap (keyboard
+sleep/hibernate resilience — since directly tested in the tenth session,
+see "Immediate live state" for the resolution; do not reopen without
+the user raising it).
+Every one of Phase 6's 4 windows (main, Lightbar, Controller Reactive,
+Diagnostics) plus the Phase 6.5 tray icon are all built and
+user-confirmed working. Real hardware control confirmed live for
+keyboard, lightbar, AND controller. **Check "Immediate live state" at
+the very end of this file for exactly what's running right now** —
+don't rely on any of the older "immediate live state" language earlier
+in this file, only the bottommost section is current.
 
 Phase progress (updated as each completes — see "Suggested phasing"
 below for the full list):
@@ -91,17 +97,18 @@ below for the full list):
       and fixed live, and a startup-behavior change (default preset now
       applies on every boot). One item explicitly backlogged (keyboard
       sleep/hibernate resilience).
-- [~] Installer (Inno Setup, `windows/installer/`) — packaging, service
+- [x] Installer (Inno Setup, `windows/installer/`) — packaging, service
       registration, data seeding, and uninstall all built and
-      live-tested working. **One critical bug blocking completion**:
-      Session 0 isolation breaks `typing_reactive`/lightbar-reactive
-      when the Service runs as a real Windows Service — see "Phase 7"
-      below. Fix is planned (move key capture into the GUI, forward via
-      a new endpoint) but not yet built as of this writing. **The user
-      has since authorized starting it immediately on a fresh session**
-      — see "Current status" above and "Phase 7" below for the full
-      go-ahead language; a session resuming cold on this file should
-      begin building it, not ask again.
+      live-tested working. The critical bug that was blocking
+      completion — Session 0 isolation breaking `typing_reactive`/
+      lightbar-reactive when the Service runs as a real Windows Service
+      — is **fixed and user-confirmed live** ("I just tested your live
+      update, it works"), see "Phase 7" below, "Fix built and verified
+      (2026-09-10, eighth session)". Real cold-boot timing confirmed in
+      the tenth session (better than PredatorSense's own timing).
+      **Functionally complete**; two small non-blocking items remain
+      (uninstall fix re-verification, one backlogged theming bug) — see
+      "Immediate live state" at the end of this file.
 
 **Scope reversal, 2026-09-09**: an earlier version of this document
 marked `effects/controller_reactive.py` + `hardware/controller.py` (the
@@ -1980,7 +1987,7 @@ specifically so the test would prove something) → Stopped+Disabled on
 install, and back to Automatic+Running on uninstall; the HKCU autostart
 Run key is added and removed correctly (`uninsdeletevalue`).
 
-### Critical finding, NOT fixed yet — Session 0 isolation breaks reactive input
+### Critical finding, FIXED (2026-09-10, eighth session) — Session 0 isolation breaks reactive input
 
 **This is the one thing standing between the installer and Phase 7
 actually being done.** Discovered live: after a real install, "Red
@@ -2033,47 +2040,187 @@ finishes, while a login-triggered Scheduled Task can't act until after
 a full login, a much longer ugly-animation window. That goal is real
 and the true-service architecture is the right way to get it.
 
-**Planned fix, NOT YET BUILT as of this writing — but the user has since
-explicitly authorized starting it on a fresh session** (their words,
-about resuming after compacting this conversation: "After I compact
-this chat all I want to just be able to say 'read the windows handoff
-doc and continue' and you continue working on the reactive problem" —
-so a cold session reading this file, told to "read the handoff and
-continue," should begin building this immediately, not treat the
-earlier "please dont start until I say to" as still in force): move key
-capture out of the Service (Session 0)
-and into `JmaStudio.Gui` (which runs in the interactive session, Session
-1+, as confirmed by the tray icon architecture). The GUI would host its
-own `GlobalKeyboardHook`/`WindowsKeyMap` (a third copy of the existing,
-already-proven implementation from `JmaStudio.HardwareTest`/
-`JmaStudio.Service` — not new/experimental code) and forward each real
-keydown to a new `POST /keypress` endpoint on the Service, which feeds
-the same `KeyState` dictionary `InputListener`/the render loop already
-read. Two requirements the user specifically probed on (this is a
-gaming laptop, used as one — real-world input latency matters) that are
-non-negotiable, not just nice-to-haves:
-1. **The hook callback must never block on the network call.** A
-   low-level keyboard hook is synchronous and system-wide; queue the
-   event and let a background task do the actual HTTP POST, so the hook
-   returns immediately regardless of network timing. Getting this wrong
-   would risk real, system-wide input lag, not just an app-local issue.
-2. **Filter out key-repeat before forwarding.** A held key (WASD during
-   actual gameplay is the obvious case) fires the low-level hook
-   repeatedly for as long as it's held; only the initial keydown
-   transition needs to reach the Service. Track currently-held keys
-   client-side in the hook handler and skip forwarding on repeats.
-Also worth doing once built: gate forwarding entirely on whether a
-reactive-type feature is actually active (a `typing_reactive`-family
-effect, or lightbar-reactive enabled) so there's exactly zero overhead
-the rest of the time — not required for correctness, but a reasonable
-extra given the stated gaming-performance concern.
+**Fix built and verified (2026-09-10, eighth session).** A fresh session
+resumed cold on this file, was told "read the windows handoff doc and
+continue," and per the standing authorization above began building this
+immediately (confirmed current live state matched this file's notes
+first — `sc query JmaStudioService`/`AcerLightingService`, `GET
+/status`, tray/GUI process check — all matched exactly). Implementation:
+moved key capture out of the Service (Session 0) and into
+`JmaStudio.Gui` (which runs in the interactive session, Session 1+, as
+already established by the tray icon architecture).
 
-**Not yet empirically verified, worth doing once this is built**: how
-early, in wall-clock terms relative to the login screen, the real
-installed service actually starts on this specific machine — confident
-in the general Windows behavior (`Automatic` services start well before
-login), but the exact timing on this hardware hasn't been watched
-through an actual cold reboot yet.
+- **New in `JmaStudio.Gui`**: `WindowsKeyMap.cs` (verbatim third copy of
+  the vkCode-to-name table already proven in `JmaStudio.HardwareTest`/
+  `JmaStudio.Service`). `GlobalKeyboardHook.cs` (a modified third copy —
+  see next point for the one real difference). `KeypressForwarder.cs`
+  (new class, owns the hook plus a `DispatcherTimer`-driven gate,
+  forwards via `ApiClient.PostKeypressAsync`). Wired into `App.xaml.cs`
+  alongside the tray icon — constructed and `Start()`-ed in `OnStartup`
+  right after `_trayIcon`, disposed in `OnExit`. Runs for the whole GUI
+  lifetime, not tied to `MainWindow` being visible, since the point is
+  for reactive effects to keep working while the window is hidden in the
+  tray.
+- **The one real difference from the other two `GlobalKeyboardHook`
+  copies**: this one also reports key-UP transitions (a new `KeyUp`
+  event, firing on `WM_KEYUP`/`WM_SYSKEYUP`), which neither the
+  `HardwareTest` nor `Service` copies needed before. A `WH_KEYBOARD_LL`
+  hook's `KBDLLHOOKSTRUCT` carries no "is this a repeat" bit (unlike a
+  normal `WM_KEYDOWN` message's lParam bit 30) -- `KeypressForwarder`
+  needs real up-transitions to know when a held key was actually
+  released, so it can tell "still held, this is a repeat" apart from "a
+  genuinely new press of the same key."
+- **Requirement 1 (never block the hook thread) satisfied via
+  `Task.Run(() => _api.PostKeypressAsync(name))`**, never awaited from
+  `OnKeyDown`. `ApiClient.PostKeypressAsync` (new) swallows
+  `HttpRequestException`/`TaskCanceledException` itself, same pattern as
+  the existing `ShutdownServiceAsync`.
+- **Requirement 2 (filter auto-repeat) satisfied via a `HashSet<string>
+  _heldKeys`** guarded by a lock: `OnKeyDown` only forwards if
+  `_heldKeys.Add(name)` actually added a new entry (the key wasn't
+  already held); `OnKeyUp` removes it. Confirmed live via the Service's
+  own request log: real typing produced `POST /keypress` entries spaced
+  like genuine keystrokes (100-800ms apart), not a tight repeat-flood.
+- **Gating (the "worth doing" extra, also built)**: `KeypressForwarder`
+  owns a `DispatcherTimer` (3s interval, plus one immediate check on
+  `Start()`) that polls `GetStatusAsync()`/
+  `GetLightbarReactiveConfigAsync()` and sets a `volatile bool
+  _forwardingEnabled` -- true only when `CurrentEffect ==
+  "typing_reactive"` or the lightbar reactive config's `Enabled` is
+  true. On any polling failure (Service unreachable), defaults to
+  `false` -- no point forwarding to a Service that can't even answer a
+  status check. `OnKeyDown` checks this flag after the repeat-filter,
+  before the `Task.Run` forward.
+- **Service side**: `InputListener.OnKeyDown` renamed to `RecordKeyDown`
+  and made public -- the single entry point for a keydown regardless of
+  source (this Service's own local hook, dev-mode only, OR a forwarded
+  `/keypress`). New `Endpoints.MapInput` maps `POST /keypress`
+  (`KeypressRequest(string Key)`, new in `RequestModels.cs`) straight to
+  `inputListener.RecordKeyDown(req.Key)`. **Real double-counting risk
+  found and avoided before it ever shipped**: the Service's own local
+  hook (`InputListener.Start()`) previously ran unconditionally in
+  `Program.cs`, which would have fired for every real keystroke
+  simultaneously alongside the GUI's newly-forwarded events whenever
+  both happen to run in the same interactive session (true for ALL prior
+  dev-mode testing, where the Service ran as a console app in Session
+  1) -- double-registering every press. Fixed by gating
+  `inputListener.Start()` behind an opt-in env var
+  (`JMASTUDIO_LOCAL_KEY_HOOK=1`, off by default) instead of calling it
+  unconditionally; the GUI's forwarded `/keypress` is now the only active
+  input source in the normal case (GUI + Service both running), while
+  the local hook stays available for the narrow case of testing the
+  Service's reactive effects with no GUI open at all.
+
+**Deployed and verified against the REAL installed service, live, this
+session** (not dev mode -- this is the exact configuration the bug was
+found in): rebuilt both projects (`dotnet build`, 0 warnings/errors),
+then republished both as self-contained single-file `win-x64` builds
+directly over the live install (`sc stop JmaStudioService` -> `Sleep 2s`
+settle delay, same fix already proven during uninstall testing -> kill
+the running `JmaStudio.Gui.exe` -> `dotnet publish -o` straight into
+`C:\Program Files\JMA Studio\Service` and `...\Gui` -> `sc start
+JmaStudioService`), then launched the GUI fresh (unelevated, as the
+normal interactive user). Confirmed via the Service's own request log
+(`C:\ProgramData\JMA Studio\data\logs\service.log`): real `POST
+/keypress` entries arriving while "Red Chase" was the active effect,
+correctly gated (a `GET /lightbar/reactive` poll immediately preceded
+the first forwarded keypress), and spaced like genuine keystrokes, not a
+repeat-flood. Cross-checked `GET /frame` returning different colors
+300ms apart (proving the render loop was actively animating, not
+static). **Then the user physically confirmed on the real hardware**:
+"I just tested your live update, it works." This is the same
+real-hardware verification bar every other phase in this file has used
+-- not just log inspection.
+
+**Not yet empirically verified, worth doing once Phase 7 is otherwise
+wrapped up**: how early, in wall-clock terms relative to the login
+screen, the real installed service actually starts on this specific
+machine -- confident in the general Windows behavior (`Automatic`
+services start well before login), but the exact timing on this
+hardware hasn't been watched through an actual cold reboot yet. This is
+now the ONLY remaining unverified item blocking Phase 7 from being
+called fully done, alongside the still-unverified `WizardImageStretch`
+fix (see "Immediate live state" at the end of this file).
+
+### Uninstall live-tested: 2 real bugs found + fixed (NOT yet re-verified); 1 theming bug found, backlogged (2026-09-11, ninth session)
+
+The user explicitly asked to test the uninstall's `Sleep(2000)` fix live
+(never actually re-verified after being added in the seventh session --
+see the bug list above). Rebuilt via `build.ps1` (bundling this
+session's `/keypress` fix), then ran the real installed uninstaller
+(`unins000.exe`) while `JmaStudioService` AND `JmaStudio.Gui.exe` were
+both genuinely running, and chose "No" (delete data) at the keep-data
+prompt when asked directly by the user which button they clicked --
+confirmed this was intentional, not a bug (`AppDataRoot()` being fully
+gone afterward was expected, not a `KeepUserData` logic failure).
+
+**Two real bugs found, both fixed in code, NEITHER yet re-verified via
+an actual uninstall run** (the session moved on to the theming bug
+below before a clean re-test happened -- this is the top thing to do
+next time uninstall testing resumes):
+1. **`JmaStudio.Service.exe` was STILL left behind**, even with the
+   `Sleep(2000)` fix in place -- proof a fixed sleep was never a real
+   guarantee, just a race that happened to be won during the original
+   (seventh-session) test and lost this time. **Fixed**: replaced with
+   `WaitForFileUnlocked()`, a real poll-and-retry loop (tries
+   `DeleteFile()` every 250ms, up to 40 attempts / 10s) instead of
+   blindly sleeping a fixed amount -- resolves as soon as the handle is
+   actually released, and degrades gracefully (logs a warning, lets
+   Inno's own removal pass try anyway) if something unusual holds the
+   file past the full wait.
+2. **`JmaStudio.Gui.exe` was ALSO left behind** -- a previously
+   undiscovered bug: the uninstall script had never once addressed the
+   GUI/tray process at all (no service registration of its own, no
+   graceful-shutdown call), so if it's running (the normal case), its
+   `.exe` is still locked when Inno tries to delete it. **Fixed**: added
+   `Exec('taskkill.exe', '/F /IM JmaStudio.Gui.exe', ...)` as the very
+   first step of `CurUninstallStepChanged(usUninstall)`, before the
+   Service is even touched.
+
+Both fixes are in `windows/installer/JmaStudio.iss`, compiled cleanly,
+but the actual verification uninstall test that would prove them never
+happened this session (see "Immediate live state" at the end of this
+file for exactly why, and what to do first next time).
+
+**New theming bug found, 3 fix attempts failed, explicitly backlogged
+by the user ("add this for fix later... move on")**: the Restart
+Manager "Preparing to Install" page (shown automatically by Inno
+whenever a running process locks a file Setup needs to overwrite --
+surfaced live here because the leftover `JmaStudio.Gui.exe` from bug #2
+above was still running during the very next install attempt) has an
+unreadable app list and two unreadable "Automatically close/Do not
+close the applications" radio options -- this page was never covered by
+any previous live test, since nothing had ever been left running across
+a reinstall before. **Confirmed via a temporary `Log(Name)` diagnostic
+pass** (removed after use) that `ThemeControl`'s recursive walk DOES
+reach the real controls (`FPreparingYesRadio`/`FPreparingNoRadio`/
+`FPreparingMemo`), ruling out the walk simply missing them. Three
+attempts, each compiled cleanly but visually failed live:
+1. Guessed plain VCL `TRadioButton`/`TCheckBox`/`TLabel`/`TListBox`/
+   `TMemo` -- valid identifiers in Inno's script engine (compiled), but
+   never matched the real runtime objects via `is`.
+2. Guessed Inno's own `TNewRadioButton`/`TNewMemo` (matching the "New"-
+   prefixed convention every other themed control already uses) --
+   also compiled, also didn't visually take effect.
+3. Bypassed the generic walk entirely for just these three, setting
+   them directly via `WizardForm.PreparingYesRadio`/`PreparingNoRadio`/
+   `PreparingMemo` (documented public properties, no runtime type check
+   needed at all) -- STILL no visible change.
+That three independent approaches (two different guessed types, then a
+type-check-free direct property path) all failed suggests something
+more structural is going on with this specific page -- possibly a
+timing issue (these controls might get destroyed/recreated by Inno's
+own RestartManager-detection logic AFTER `CurPageChanged`/
+`ApplyDarkTheme` already ran for this page, similar in spirit to this
+project's own WPF "mid-BAML-parse" timing bugs from Phase 6, but on
+Inno's side this time) rather than a simple wrong-class guess. **Do not
+attempt a 4th blind guess** -- if this comes up again, get real
+evidence first: try re-theming from a distinct, later hook (e.g. a
+`WizardForm`-level idle/paint hook if Inno's scripting exposes one, or
+re-running `ApplyDarkTheme` on a short delay/timer after landing on this
+page) rather than another one-shot class guess at `CurPageChanged` time.
+The `Log(Name)` diagnostic pattern used to find the real control names
+here is worth reusing directly if this is picked back up.
 
 ### Settled decision #2 — annotation, not a reversal
 
@@ -2230,76 +2377,216 @@ service was tested for the first time this session.
    mid-session, ahead of the installer, since Python's own autostart
    story is built around the tray icon, not the full GUI window.
 7. Installer (location prompt, consent notice, service registration,
-   GUI autostart, preset data migration) — **IN PROGRESS**, see "Phase
-   7" above. Built with Inno Setup (`windows/installer/`), not the
-   originally-unspecified mechanism; migration ended up NOT being a
-   Python-import feature at all (bundles current C# data as defaults
-   instead, per explicit user decision). GUI autostart correctly
-   targets `JmaStudio.Gui.exe` itself, matching Python's own behavior.
-   **Blocked on one critical bug** before this can be marked done —
-   Session 0 isolation breaks reactive input features when the Service
-   runs as a real Windows Service; fix is planned, not started.
+   GUI autostart, preset data migration) — **FUNCTIONALLY COMPLETE**,
+   see "Phase 7" above. Built with Inno Setup (`windows/installer/`),
+   not the originally-unspecified mechanism; migration ended up NOT
+   being a Python-import feature at all (bundles current C# data as
+   defaults instead, per explicit user decision). GUI autostart
+   correctly targets `JmaStudio.Gui.exe` itself, matching Python's own
+   behavior. The critical bug that was blocking completion — Session 0
+   isolation breaking reactive input features when the Service runs as
+   a real Windows Service — is **fixed and user-confirmed live**, and
+   real cold-boot timing is confirmed (beats PredatorSense's own
+   timing, per the user's own tenth-session observation). Two small,
+   explicitly non-blocking items remain: re-verify the ninth session's
+   two uninstall fixes with an actual uninstall test, and a backlogged
+   (do-not-reattempt-without-new-evidence) theming bug on the Restart
+   Manager "Preparing to Install" page.
 
-## Immediate live state as of writing this (2026-09-10, end of seventh session)
+## Immediate live state as of writing this (2026-09-11, end of ninth session)
 
 **This section supersedes every "immediate live state" note above it in
 this file — only trust this one.**
 
-- **A REAL installed `JmaStudioService` is running right now** —
-  registered as an actual `AUTO_START` Windows Service (not a dev-mode
-  console app this time), `binPath` at `C:\Program Files\JMA
+- **A REAL installed `JmaStudioService` + `JmaStudio.Gui.exe` are
+  running right now**, from a clean fresh install done this session
+  (uninstalled everything, then reinstalled via a freshly-built
+  `Setup.exe`) — `sc query JmaStudioService`: `STATE: RUNNING`,
+  `AcerLightingService`: `STATE: STOPPED`. "Red Chase" (`typing_reactive`)
+  is the active keyboard effect, lightbar all 3 zones blue, controller
+  connected with reactive disabled — this is a genuinely clean, fully
+  working state, not a leftover test artifact.
+- **`C:\ProgramData\JMA Studio\` was fully wiped this session** (the
+  user chose "No, delete" during the uninstall test) then fully
+  reseeded from the installer's bundled defaults on the subsequent
+  reinstall — so current presets/config are back to the factory-bundled
+  set (same data `windows/data/*.json` in git holds), not whatever
+  state existed before this session's uninstall. If any preset editing
+  happened between the eighth and ninth sessions that was never
+  reflected in `windows/data/`, it's gone; there's no reason to believe
+  that happened, but worth knowing this reset occurred.
+- **`windows/installer/JmaStudio.iss` has uncommitted changes from this
+  session**: the two uninstall fixes (`WaitForFileUnlocked`, GUI
+  `taskkill`) and the (currently unsuccessful) "Preparing to Install"
+  theming attempts — see "Uninstall live-tested" above for the full
+  story. **Neither uninstall fix has actually been re-verified with a
+  real uninstall test yet** — this is the single most important thing
+  to do before trusting them.
+- **`windows/installer/output/JmaStudio-Setup.exe` on disk right now
+  reflects the LATEST compile** (the one with the failed 3rd theming
+  attempt still in place) — safe to use for further testing, just know
+  the Preparing-to-Install page will still be unreadable if it ever
+  shows up again (only appears when a locked file is detected, which
+  won't happen on a normal fresh-machine install).
+- **New backlog item, this session**: the Restart Manager "Preparing to
+  Install" page's contrast bug (3 fix attempts failed — see above),
+  explicitly backlogged by the user ("add this for fix later... move
+  on"). **Do not attempt a 4th fix without new evidence** — see that
+  section's closing paragraph for what "new evidence" should look like
+  here.
+- **Sleep/hibernate/restart resilience testing — sleep and hibernate
+  DONE this session (both passed cleanly), restart NOT YET DONE.**
+  Directly motivated by the long-backlogged "`Keyboard.cs` has no
+  sleep/hibernate reconnect logic" item (Phase 6.5 above), now tested
+  for real instead of left theoretical. Order was sleep → hibernate →
+  restart (user's choice).
+  - **Sleep (standby), tested twice — clean pass, no reconnect logic
+    needed at all.** Same Service/GUI process survived both cycles
+    (PID unchanged, uptime counted straight through matching real
+    elapsed wall-clock time — never restarted), keyboard/lightbar/
+    controller all stayed connected with no gap, HID/WMI latency
+    unchanged from the pre-sleep baseline, and the typing_reactive chase
+    worked immediately on waking both times. The backlogged "Keyboard.cs
+    has no sleep reconnect logic" concern turns out to be moot for sleep
+    specifically on this hardware/driver stack (unlike the controller,
+    which the Python side found genuinely does need reconnect logic
+    after sleep — that fix already exists in `Controller.cs`, ported in
+    Phase 5). One unrelated oddity the user noticed (Microsoft Access
+    opening on wake, twice) — confirmed this is NOT anything in this
+    codebase (zero Office/Access integration anywhere in
+    `JmaStudio.Gui`/`JmaStudio.Service`); most likely it was already
+    open before sleep and Windows just restored its window, or an
+    unrelated scheduled task/Startup entry. Not investigated further,
+    not this project's concern.
+  - **Hibernate, tested once — process survived (same PID, hibernate on
+    this machine is a real suspend-to-disk/restore, not a reboot), but
+    found ONE real, understood, WON'T-FIX cosmetic gap.** After waking
+    from hibernate, the keyboard briefly showed its BIOS/firmware
+    default lighting even with the desktop fully up, then snapped
+    correctly into "Red Chase" on the very first keypress. Root cause
+    (reasoned through, not yet verified by code inspection or a fix
+    attempt): `RenderLoopService`/`DaemonState.RecordFrame` only writes
+    a new HID frame when the computed frame differs from the last frame
+    actually sent — a real, otherwise-correct optimization. Hibernate
+    fully power-cycles USB devices, so the physical keyboard resets to
+    its own firmware default on power-up, independent of software. But
+    hibernate restores the Service's RAM byte-for-byte, so its cached
+    "last frame sent" is unchanged across the cycle — on resume, the
+    render loop correctly computes "this matches what I last sent" and
+    skips the write, unaware the physical device forgot everything. The
+    first genuinely new frame (the keypress-triggered bolt) finally
+    differs from that stale cache, forcing a real write that corrects
+    it. A real fix would hook Windows' power-resume event
+    (`Microsoft.Win32.SystemEvents.PowerModeChanged`, resume case) and
+    force one unconditional frame re-push on wake. **The user explicitly
+    said "I don't think I want to fix that" — this is a WON'T-FIX, not
+    a backlog item.** Do not implement this fix unless the user
+    explicitly reopens it.
+  - **Restart, tested (tenth session, after a context compaction and
+    resume via "read the windows handoff doc and continue") — clean
+    pass, and this closes out the LAST open unknown from Phase 7.** New
+    PIDs confirmed after resume (Service 5680, GUI 25700 — both
+    different from the pre-restart baseline's 38056/26292, proving this
+    was a genuine cold boot, not a resume), both services back in their
+    correct states (`JmaStudioService` RUNNING, `AcerLightingService`
+    STOPPED), "Red Chase" correctly reapplied as the default, keyboard/
+    lightbar/controller all connected. **The user's own real-world
+    observation, unprompted, answers the long-open boot-timing
+    question**: "the keyboard and backlight background colors pickup
+    faster th[a]n the predator sense software ever did" — i.e. the
+    Automatic-start Windows Service (settled decision #2) achieves
+    exactly the pre-login clean-boot goal that originally motivated
+    keeping a true service instead of a Scheduled Task (see Phase 7's
+    "Critical finding" section above). **One expected, correctly-
+    understood non-issue, also the user's own words**: "the reactive
+    side didn't pick up until I was fully logged in... I guess to be
+    expected as the hook is connected to the app and not the service."
+    Exactly right — `KeypressForwarder`'s global hook lives in
+    `JmaStudio.Gui` (Session 1+, only starts once a desktop session
+    exists), while the background color comes from the Service (Session
+    0, starts well before login) — this is the correct, designed
+    tradeoff of the `/keypress` fix, not a gap. User's closing verdict:
+    "GOOD JOB."
+- **Phase 7 is now functionally complete.** All three items that were
+  blocking it are resolved: the Session 0 reactive-input fix (user-
+  confirmed working), the wizard-image white-margin fix (never
+  complained about across ~5 wizard runs this session, reasonably
+  confident though never asked about directly), and now real cold-boot
+  timing (confirmed better than PredatorSense ever was). **Two small,
+  explicitly non-blocking items remain, neither gating Phase 7**:
+  1. The two uninstall fixes (`WaitForFileUnlocked`, GUI `taskkill`,
+     ninth session) are still NOT re-verified with an actual uninstall
+     test — do this before fully trusting the uninstaller, but it
+     doesn't block calling Phase 7 done since the installer/upgrade
+     path itself is fully proven.
+  2. The Restart Manager "Preparing to Install" page's contrast bug —
+     explicitly backlogged, 3 fix attempts failed, do not re-attempt
+     without new evidence (see "Uninstall live-tested" above).
+  Also explicitly WON'T-FIX (user's own words, tenth session): the
+  hibernate cosmetic gap (brief BIOS-default flash until first
+  keypress) — do not implement the `SystemEvents.PowerModeChanged`
+  fix described above unless the user reopens this themselves.
+- **Old "eighth session" state below this point is superseded** by
+  everything above, but kept for its still-relevant Phase 7 file-change
+  list.
+
+## Immediate live state as of writing this (2026-09-10, end of eighth session)
+
+**This section supersedes every "immediate live state" note above it in
+this file — only trust this one.**
+
+- **A REAL installed `JmaStudioService` is running right now, with the
+  `/keypress` fix's binaries** — registered as an actual `AUTO_START`
+  Windows Service, `binPath` at `C:\Program Files\JMA
   Studio\Service\JmaStudio.Service.exe`, running as `LocalSystem`.
-  Confirmed via `sc query JmaStudioService`: `STATE: RUNNING`. This is
-  the install from Phase 7's live testing this session, left in place
-  deliberately (not reverted to dev-mode) so the Session 0 finding can
-  be picked up and fixed against a real installed service, not
-  re-derived from scratch. `JmaStudio.Gui.exe` is also running (its
-  tray icon launched automatically via the installer's `[Run]`
-  postinstall fix), confirmed via `tasklist`.
-- **`AcerLightingService` is currently Stopped/Disabled** — correctly
-  flipped from Automatic/Running (a clean baseline the user had me
-  manually restore mid-session specifically so this test would prove
-  something real) by the installed Service's own startup check.
-- **Data lives at `C:\ProgramData\JMA Studio\`** now, not
-  `windows\data\` — confirmed populated (`data\`, `keymap.json`, `logs\`
-  all present) via the installer's default-data seeding.
+  Confirmed via `sc query JmaStudioService`: `STATE: RUNNING`. This
+  session republished BOTH `JmaStudio.Service` and `JmaStudio.Gui`
+  (self-contained single-file `win-x64`, same as `build.ps1` does)
+  directly over the live install (`sc stop` → `Sleep 2s` → `dotnet
+  publish -o` straight into the installed folders → `sc start`), so the
+  binaries on disk right now are the fixed ones, not the ones Phase 7's
+  seventh session left behind. `JmaStudio.Gui.exe` is also running
+  (launched fresh, unelevated, after the redeploy), tray icon present,
+  confirmed via `tasklist`.
+- **The Session 0 reactive-input bug is FIXED and user-confirmed live**
+  ("I just tested your live update, it works") — see Phase 7's "Fix
+  built and verified (2026-09-10, eighth session)" for the full
+  implementation writeup. `typing_reactive`-family effects and the
+  lightbar reactive flash now correctly react to real keystrokes against
+  this real installed service.
+- **`AcerLightingService` is currently Stopped/Disabled** — unaffected by
+  this session's redeploy, still handled correctly by the Service's own
+  startup check.
+- **Data lives at `C:\ProgramData\JMA Studio\`** — more precisely,
+  `JMASTUDIO_DATA_DIR` resolves to `C:\ProgramData\JMA Studio\data\`
+  (presets, live state, AND `logs\service.log` all live directly under
+  that `data\` subfolder — not a sibling of it) and
+  `JMASTUDIO_KEYMAP_PATH` to `C:\ProgramData\JMA Studio\keymap.json`
+  (one level up from `data\`). Worth knowing exactly since a future
+  session will want to tail the log or inspect presets again.
 - **The Python stack is fully stopped**, untouched since earlier
   sessions.
-- **New this session**: `windows/installer/` (new directory) —
-  `build.ps1`, `JmaStudio.iss`, `StartJmaStudio.bat`,
-  `generate-wizard-images.ps1`, `assets/` (generated wizard images),
-  `publish/` and `output/` (build artifacts — consider gitignoring
-  before ever committing this directory, they weren't excluded yet).
-  Inno Setup 6 was installed on this machine via `winget install --id
-  JRSoftware.InnoSetup` (`ISCC.exe` at `%LocalAppData%\Programs\Inno
-  Setup 6\ISCC.exe`) — a new machine setting up this repo needs the
-  same, `build.ps1` will fail immediately with a clear error if it's
-  missing.
-- **THE ONE THING TO READ BEFORE DOING ANYTHING ELSE**: "Phase 7:
-  Installer" above, specifically its "Critical finding" subsection.
-  Short version: a real Windows Service runs in Session 0, which can't
-  see global keyboard input from the interactive desktop (Session 1+) —
-  `typing_reactive`-family effects and the lightbar reactive flash
-  don't work at all against this real installed service, confirmed live
-  ("Red Chase" renders its background but never chases). The fix (move
-  the keyboard hook into `JmaStudio.Gui`, forward via a new
-  `POST /keypress` endpoint, async + repeat-filtered for gaming-safe
-  performance) is fully designed and agreed with the user, just not
-  built yet as of this writing. **Standing authorization**: the user
-  said, about resuming after compacting, "I want to just be able to say
-  'read the windows handoff doc and continue' and you continue working
-  on the reactive problem" — so if that's how this session started,
-  begin building the fix now, using the full design in "Phase 7"'s
-  "Critical finding" section above. Don't re-ask or re-confirm the
-  design; it's settled. Do still surface anything genuinely new you
-  find while building it (same as any other work), just don't treat
-  the earlier "please dont start until I say to" as still blocking you.
-- **One thing to re-verify, not yet done**: the `WizardImageStretch=yes`
-  fix for the installer's wizard-image white-margin bug was made but
-  never re-tested live (the session moved to the Session 0
-  investigation immediately after). Quick to check next time: run
-  `windows\installer\output\JmaStudio-Setup.exe` and look at the
-  Welcome/Finished pages.
+- **New this session** (all in `JmaStudio.Gui`, none yet committed):
+  `WindowsKeyMap.cs`, `GlobalKeyboardHook.cs` (with the new `KeyUp`
+  event), `KeypressForwarder.cs`. Modified: `App.xaml.cs` (wires
+  `KeypressForwarder` in alongside the tray icon), `ApiClient.cs` (new
+  `PostKeypressAsync`). Service side, also modified: `InputListener.cs`
+  (`OnKeyDown` → public `RecordKeyDown`), `Endpoints.cs` (new
+  `MapInput`, updated header comment), `RequestModels.cs` (new
+  `KeypressRequest`), `Program.cs` (`inputListener.Start()` now gated
+  behind `JMASTUDIO_LOCAL_KEY_HOOK=1`, off by default; new
+  `Endpoints.MapInput` call site).
+- **One thing to re-verify, still not done**: the `WizardImageStretch=yes`
+  fix for the installer's wizard-image white-margin bug (made in the
+  seventh session) was never re-tested live — the seventh session moved
+  straight to the Session 0 investigation, and this eighth session
+  worked directly against the live install rather than through the
+  installer/uninstaller flow, so it still hasn't been exercised. Quick
+  to check next time: run `windows\installer\build.ps1` (to bundle
+  THIS session's `/keypress` fix into a fresh `Setup.exe` — the
+  `output\JmaStudio-Setup.exe` left over from the seventh session
+  predates this fix), then run the result and look at the Welcome/
+  Finished pages for the white margin.
 - **Three backlogged, NOT-fixed known issues** — do not start on any of
   these without the user raising it again:
   1. See "Phase 6 continued: Lightbar window" above: an all-zone
@@ -2310,18 +2597,15 @@ this file — only trust this one.**
   3. See "Phase 7" above: the exact real-world boot timing of the
      installed service relative to the login screen hasn't been watched
      through an actual cold reboot yet.
-- **Start here next time (standing authorization to just proceed — see
-  above, no need to re-ask)**: (1) confirm current live state fresh
-  (`sc query JmaStudioService`/`AcerLightingService`, tray icon present,
-  `GET /status`) rather than trusting this note blindly, since time may
-  have passed; (2) read "Phase 7"'s "Critical finding" subsection in
-  full, then build the `/keypress` fix described there — the design is
-  finished, including the two non-negotiable gaming-performance
-  requirements (async/non-blocking hook, repeat-filtering) — this is
-  the default next action if the session resumed via something like
-  "read the windows handoff doc and continue"; (3) once that's built
-  and verified live (including an actual cold-reboot timing check),
-  re-verify the `WizardImageStretch` fix and consider Phase 7 done;
-  (4) don't revisit any of the three backlogged items above without the
-  user raising them first. **Do not commit** — the user explicitly asked to prepare
-  documentation without committing this session.
+- **Start here next time**: (1) confirm current live state fresh (`sc
+  query JmaStudioService`/`AcerLightingService`, tray icon present, `GET
+  /status`) rather than trusting this note blindly, since time may have
+  passed; (2) run `windows\installer\build.ps1` to produce a fresh
+  installer that actually includes this session's `/keypress` fix (the
+  existing `output\JmaStudio-Setup.exe` does NOT), then run it and
+  re-verify the `WizardImageStretch` fix on the Welcome/Finished pages;
+  (3) once that's confirmed, do an actual cold-reboot timing check; (4)
+  after both of those, Phase 7 is fully done; (5) don't revisit any of
+  the three backlogged items above without the user raising them first.
+  Nothing from this session has been committed yet — check `git status`
+  before assuming otherwise.

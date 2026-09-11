@@ -99,7 +99,22 @@ var presetStore = new PresetStore(dataDir);
 var indexByName = Layout.NameToIndex(keymapPath);
 
 var inputListener = new InputListener(indexByName);
-inputListener.Start();
+// The Service's own local hook only ever worked because dev-mode testing
+// ran this as a plain console app in the interactive session (Session
+// 1), same as the desktop -- a real installed Windows Service runs in
+// Session 0, which cannot see interactive-desktop keystrokes at all
+// (Session 0 Isolation, see HANDOFF.md's Phase 7 "Critical finding").
+// Production key capture now comes from JmaStudio.Gui's
+// KeypressForwarder via POST /keypress (Endpoints.MapInput) instead --
+// NOT starting this local hook by default avoids double-counting every
+// keystroke when the GUI is also open and forwarding. Opt in for the
+// narrow case of testing the Service's reactive effects with no GUI
+// open at all.
+if (Environment.GetEnvironmentVariable("JMASTUDIO_LOCAL_KEY_HOOK") == "1")
+{
+    inputListener.Start();
+    logger.LogInformation("Local keyboard hook started (JMASTUDIO_LOCAL_KEY_HOOK=1).");
+}
 
 (string startupEffect, EffectParams startupParams) = ResolveStartupEffect(presetStore);
 var daemonState = new DaemonState(presetStore.LiveKeyboardState, startupEffect, startupParams);
@@ -159,6 +174,7 @@ Endpoints.MapControllerReactive(app, controllerReactiveManager, presetStore, con
 Endpoints.MapLayout(app, keymapPath);
 Endpoints.MapDiagnostics(app, diagnosticsManager, controller, logFilePath);
 Endpoints.MapSystem(app);
+Endpoints.MapInput(app, inputListener);
 
 // Loopback-only, same port the Python daemon used -- no auth either
 // way, trusted purely by being on 127.0.0.1, matching daemon/server.py.

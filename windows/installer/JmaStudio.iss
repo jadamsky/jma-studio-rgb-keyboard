@@ -159,6 +159,24 @@ begin
   begin
     TRichEditViewer(C).Color := ThemePanelColor;
     TRichEditViewer(C).Font.Color := ThemeTextColor;
+  end
+  // The Restart Manager "Preparing to Install" page (shown live, this
+  // session, when a leftover JmaStudio.Gui.exe process was still
+  // running and locking a file Setup needed to overwrite) stayed
+  // unreadable even once the walk reached its controls (confirmed via a
+  // temporary Log(Name) diagnostic pass: FPreparingYesRadio/
+  // FPreparingNoRadio/FPreparingMemo ARE visited). Root cause: they're
+  // Inno's own TNewRadioButton/TNewMemo classes (same "New"-prefixed
+  // custom-drawn control family as TNewStaticText/TNewEdit/
+  // TNewCheckListBox above), not plain VCL TRadioButton/TMemo -- an
+  // earlier guess at those plain VCL class names compiled fine (they're
+  // valid identifiers in Inno's script engine) but silently never
+  // matched these actual runtime objects via `is`.
+  else if C is TNewRadioButton then TNewRadioButton(C).Font.Color := ThemeTextColor
+  else if C is TNewMemo then
+  begin
+    TNewMemo(C).Color := ThemePanelColor;
+    TNewMemo(C).Font.Color := ThemeTextColor;
   end;
 
   if C is TWinControl then
@@ -176,6 +194,21 @@ begin
   WizardForm.PageDescriptionLabel.Font.Color := ThemeSubTextColor;
   WizardForm.WelcomeLabel2.Font.Color := ThemeSubTextColor;
   WizardForm.BeveledLabel.Font.Color := ThemeSubTextColor;
+
+  // The Restart Manager "Preparing to Install" page's radio buttons/memo
+  // stayed unreadable even after adding TNewRadioButton/TNewMemo `is`
+  // checks to the generic ThemeControl walk above (confirmed these ARE
+  // the real runtime classes via a Log(Name) diagnostic pass -- so
+  // either that `is` check itself doesn't behave as expected against
+  // Pascal Script's registered RTTI for these particular classes, or
+  // something else in the walk intercepts them first). Bypassing the
+  // walk entirely for just these three: WizardForm exposes them as
+  // documented public properties with a compile-time-known type, so
+  // this needs no runtime type check at all, unlike the generic walk.
+  WizardForm.PreparingYesRadio.Font.Color := ThemeTextColor;
+  WizardForm.PreparingNoRadio.Font.Color := ThemeTextColor;
+  WizardForm.PreparingMemo.Color := ThemePanelColor;
+  WizardForm.PreparingMemo.Font.Color := ThemeTextColor;
 end;
 
 procedure InitializeWizard();
@@ -291,6 +324,32 @@ end;
 var
   KeepUserData: Boolean;
 
+// Polls for a file to become deletable (i.e. its owning process has
+// actually released its handle) instead of guessing a fixed delay.
+// Replaces an earlier Sleep(2000)-after-sc-stop fix that turned out to
+// be a real race, not a guarantee -- confirmed live: it worked on one
+// uninstall test and then still lost the race on a later one, leaving
+// JmaStudio.Service.exe behind again with the same "some elements could
+// not be removed" warning the original fix was meant to close out.
+// Deleting the file here (rather than just checking it's unlocked) is
+// deliberate: it makes Inno's own later removal pass for this same
+// tracked file a harmless no-op either way.
+procedure WaitForFileUnlocked(const FileName: String; MaxAttempts, DelayMs: Integer);
+var
+  I: Integer;
+begin
+  if not FileExists(FileName) then Exit;
+  for I := 1 to MaxAttempts do
+  begin
+    if DeleteFile(FileName) then Exit;
+    Sleep(DelayMs);
+  end;
+  // Still locked after the full wait -- log it and let Inno's own
+  // removal pass make one more attempt anyway, rather than looping
+  // forever on a machine where something unusual is holding the handle.
+  Log('WaitForFileUnlocked: gave up waiting for ' + FileName + ' to unlock.');
+end;
+
 function InitializeUninstall(): Boolean;
 begin
   KeepUserData := (MsgBox('Keep your JMA Studio presets and configuration (' + AppDataRoot() + ')?' + #13#10#13#10 +
@@ -305,14 +364,24 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
+    // The GUI/tray process is never stopped by anything else during
+    // uninstall (no service registration of its own, no graceful-
+    // shutdown path invoked here) -- confirmed live: a real uninstall
+    // test run with the GUI still open left JmaStudio.Gui.exe behind too,
+    // a second, previously-undiscovered leftover-file bug alongside the
+    // Service one below. Best-effort force-kill; taskkill exits non-zero
+    // if the process wasn't running at all, which is fine (ResultCode
+    // unused here on purpose).
+    Exec('taskkill.exe', '/F /IM JmaStudio.Gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
     Exec('sc.exe', 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     // `sc stop` returns once the SCM reports the service stopped, but
     // the self-contained .NET process can take a moment longer to fully
-    // exit and release its own .exe file -- confirmed live: without
-    // this, Inno's file-delete pass ran while JmaStudio.Service.exe was
-    // still locked, leaving it behind with a "some elements could not
-    // be removed" warning. A short settle delay is the standard fix.
-    Sleep(2000);
+    // exit and release its own .exe file. See WaitForFileUnlocked's own
+    // comment above for why this used to be a fixed Sleep(2000) and why
+    // that wasn't actually reliable.
+    WaitForFileUnlocked(ExpandConstant('{app}\Service\JmaStudio.Service.exe'), 40, 250);
+    WaitForFileUnlocked(ExpandConstant('{app}\Gui\JmaStudio.Gui.exe'), 40, 250);
     Exec('sc.exe', 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     // Best-effort -- a no-op if AcerLightingService isn't present on
     // this machine (not a PH16-71, or it was never installed).
