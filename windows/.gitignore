@@ -2,3 +2,9 @@ bin/
 obj/
 .vs/
 *.user
+
+# Generated installer build artifacts (dotnet publish output + compiled
+# Setup.exe) -- large, fully reproducible via installer/build.ps1, not
+# source.
+installer/publish/
+installer/output/
