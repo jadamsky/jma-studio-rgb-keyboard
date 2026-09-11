@@ -6,7 +6,12 @@ actual USB lighting protocol. **Neither project's source code is copied
 into this repo** — their implementations, structure, and naming are their
 own — but the *protocol facts* they documented (opcode byte values, the
 checksum formula, packet layout) are the foundation `hardware/device.py`
-is built on.
+is built on, and — via a straight port, not a rediscovery — the same
+foundation `windows/src/JmaStudio.Hardware/Keyboard.cs` (the C# port's
+HID keyboard driver) is built on too. The `csharp-port` branch
+reimplements the Python daemon/GUI in C#/.NET, independently written
+throughout, but the underlying hardware protocol facts are the same ones
+credited below, carried forward rather than re-derived.
 
 ## Venator
 
@@ -38,7 +43,11 @@ is built on.
   are independently written — deliberately so, to keep this project free
   of any code-level relationship to either GPL-licensed source, regardless
   of what license this repo itself carries. See the module docstring in
-  `hardware/device.py` for the full technical detail.
+  `hardware/device.py` for the full technical detail. The same is true of
+  `windows/src/JmaStudio.Hardware/Keyboard.cs` on the `csharp-port`
+  branch — a completely independent C# implementation, built from the
+  same underlying protocol facts, not a translation of `hardware/device.py`'s
+  own code.
 
 ## hidapi
 
@@ -61,3 +70,9 @@ solve one specific real limitation: PredatorSense, Acer's own control
 software, only exposes a handful of canned hardware lighting effects,
 despite the PH16-71's keyboard being genuinely per-key addressable. This
 project exists to actually use that hardware capability.
+
+The full C#/.NET port on the `csharp-port` branch (a real Windows
+Service + WPF GUI replacing the Python daemon and pywebview GUI
+entirely, no Python at runtime) was built the same way, in a separate,
+much longer agentic session — see `windows/HANDOFF.md` for the complete
+build history, design decisions, and live-hardware verification record.

@@ -1,0 +1,76 @@
+{
+  "BLUE": {
+    "Lightbar": {
+      "Mode": null,
+      "ModeColor": {
+        "R": 255,
+        "G": 0,
+        "B": 0
+      },
+      "ModeSpeed": 5,
+      "ZoneColors": {
+        "1": {
+          "R": 0,
+          "G": 15,
+          "B": 255
+        },
+        "2": {
+          "R": 0,
+          "G": 255,
+          "B": 242
+        },
+        "3": {
+          "R": 0,
+          "G": 15,
+          "B": 255
+        }
+      },
+      "Brightness": 100
+    },
+    "Reactive": null
+  },
+  "Rainbow": {
+    "Lightbar": {
+      "Mode": "Rainbow",
+      "ModeColor": {
+        "R": 255,
+        "G": 0,
+        "B": 0
+      },
+      "ModeSpeed": 5,
+      "ZoneColors": null,
+      "Brightness": 100
+    },
+    "Reactive": null
+  },
+  "Red flashing": {
+    "Lightbar": {
+      "Mode": null,
+      "ModeColor": {
+        "R": 255,
+        "G": 0,
+        "B": 0
+      },
+      "ModeSpeed": 5,
+      "ZoneColors": {
+        "1": {
+          "R": 0,
+          "G": 8,
+          "B": 255
+        },
+        "2": {
+          "R": 0,
+          "G": 8,
+          "B": 255
+        },
+        "3": {
+          "R": 0,
+          "G": 8,
+          "B": 255
+        }
+      },
+      "Brightness": 100
+    },
+    "Reactive": null
+  }
+}

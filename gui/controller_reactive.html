@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JMA Studio -- Controller Reactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body { padding: 20px 24px 90px; }
+
+  .cr-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 16px;
+    margin-bottom: 22px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .cr-topbar h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .cr-topbar .panel-sub { margin-top: 2px; }
+
+  .cr-section { margin-bottom: 22px; }
+
+  .reactive-grid { display: flex; flex-wrap: wrap; gap: 20px; }
+  .reactive-field {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .reactive-field span { font-size: 11px; color: var(--text-muted); text-align: center; }
+  .reactive-field input[type="color"] {
+    width: 44px;
+    height: 32px;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid var(--panel-border);
+    background: #1a1a26;
+    cursor: pointer;
+  }
+
+  .cr-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: 420px;
+    margin-top: 18px;
+  }
+  .cr-slider-row input[type="range"] { flex: 1; }
+  .cr-slider-row span.val { width: 40px; text-align: right; }
+
+  #status-log {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 14px;
+  }
+</style>
+</head>
+<body>
+
+<div class="cr-topbar">
+  <div>
+    <h1>Controller Reactive</h1>
+    <div class="panel-sub" id="connection-status">--</div>
+  </div>
+  <label class="switch-label">
+    <input type="checkbox" id="cr-enabled">
+    <span>Enabled -- overrides everything else on the keyboard</span>
+  </label>
+</div>
+
+<section class="panel cr-section">
+  <div class="panel-header">
+    <h2>Background</h2>
+    <label class="switch-label">
+      <input type="checkbox" id="cr-bg-enabled" checked>
+      <span>Enabled</span>
+    </label>
+  </div>
+  <div class="reactive-grid">
+    <label class="reactive-field"><span>Background</span><input type="color" id="cr-bg"></label>
+  </div>
+</section>
+
+<section class="panel cr-section">
+  <div class="panel-header"><h2>Left Stick</h2></div>
+  <div class="panel-sub" style="margin-bottom: 14px;">
+    Same color regardless of direction (up/down/left/right) -- only how far it's pushed matters.
+  </div>
+  <div class="reactive-grid">
+    <label class="reactive-field"><span>Idle (0-deadzone)</span><input type="color" id="cr-left-idle"></label>
+    <label class="reactive-field"><span>Tier 1 (deadzone-50%)</span><input type="color" id="cr-left-tier1"></label>
+    <label class="reactive-field"><span>Tier 2 (51-100%)</span><input type="color" id="cr-left-tier2"></label>
+  </div>
+</section>
+
+<section class="panel cr-section">
+  <div class="panel-header"><h2>Right Stick</h2></div>
+  <div class="reactive-grid">
+    <label class="reactive-field"><span>Idle (0-deadzone)</span><input type="color" id="cr-right-idle"></label>
+    <label class="reactive-field"><span>Tier 1 (deadzone-50%)</span><input type="color" id="cr-right-tier1"></label>
+    <label class="reactive-field"><span>Tier 2 (51-100%)</span><input type="color" id="cr-right-tier2"></label>
+  </div>
+</section>
+
+<section class="panel cr-section">
+  <div class="panel-header"><h2>Deadzone</h2></div>
+  <div class="panel-sub">Shared by both sticks -- also sets the boundary between the Idle and Tier 1 colors above.</div>
+  <div class="cr-slider-row">
+    <input type="range" id="cr-deadzone" min="0" max="50" value="15">
+    <span class="val" id="cr-deadzone-val">15%</span>
+  </div>
+</section>
+
+<section class="panel cr-section">
+  <div class="panel-header"><h2>Face Buttons</h2></div>
+  <div class="reactive-grid" id="cr-group-face"></div>
+</section>
+
+<section class="panel cr-section">
+  <div class="panel-header"><h2>D-Pad</h2></div>
+  <div class="reactive-grid" id="cr-group-dpad"></div>
+</section>
+
+<section class="panel cr-section">
+  <div class="panel-header"><h2>Shoulders &amp; Triggers</h2></div>
+  <div class="reactive-grid" id="cr-group-shoulders"></div>
+</section>
+
+<section class="panel cr-section">
+  <div class="panel-header"><h2>Paddles &amp; Fn <span class="panel-sub">(DualSense Edge only)</span></h2></div>
+  <div class="reactive-grid" id="cr-group-paddles"></div>
+</section>
+
+<div id="status-log"></div>
+
+<footer class="actionbar">
+  <button id="cr-save-btn" class="btn btn-accent">Save current settings</button>
+  <button id="cr-default-btn" class="btn btn-ghost">Default</button>
+  <span id="cr-toast" class="toast"></span>
+</footer>
+
+<script>
+const GROUP_LABELS = {
+  cross: "Cross", square: "Square", circle: "Circle", triangle: "Triangle",
+  dpad_up: "D-Pad Up", dpad_down: "D-Pad Down", dpad_left: "D-Pad Left", dpad_right: "D-Pad Right",
+  l1: "L1", r1: "R1", l2: "L2 (100%)", r2: "R2 (100%)",
+  left_paddle: "Left Paddle", right_paddle: "Right Paddle", left_fn: "Left Fn", right_fn: "Right Fn",
+};
+const GROUP_SECTIONS = {
+  face: ["cross", "square", "circle", "triangle"],
+  dpad: ["dpad_up", "dpad_down", "dpad_left", "dpad_right"],
+  shoulders: ["l1", "r1", "l2", "r2"],
+  paddles: ["left_paddle", "right_paddle", "left_fn", "right_fn"],
+};
+
+function hexToRgb(hex) {
+  hex = hex.replace("#", "");
+  return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+}
+function rgbToHex(r, g, b) {
+  return "#" + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, "0")).join("");
+}
+
+async function post(path, body) {
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const data = await res.json();
+    if (!data.ok) setStatus("Error: " + (data.error || "unknown"), true);
+    return data;
+  } catch (e) {
+    setStatus("Request failed: " + e.message, true);
+  }
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById("status-log");
+  el.textContent = msg;
+  el.style.color = isError ? "var(--danger)" : "var(--text-muted)";
+}
+
+let toastTimer = null;
+function toast(msg, isError) {
+  const el = document.getElementById("cr-toast");
+  el.textContent = msg;
+  el.classList.toggle("error", !!isError);
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+function throttle(fn, ms) {
+  let lastCall = 0, pendingArgs = null, timer = null;
+  function run(args) { lastCall = Date.now(); fn(...args); }
+  return (...args) => {
+    const elapsed = Date.now() - lastCall;
+    if (elapsed >= ms) { run(args); }
+    else {
+      pendingArgs = args;
+      if (!timer) timer = setTimeout(() => { timer = null; if (pendingArgs) run(pendingArgs); pendingArgs = null; }, ms - elapsed);
+    }
+  };
+}
+
+// ---- building the per-group color pickers ----------------------------
+
+const groupInputs = {};
+
+function buildGroupGrid(containerId, groupNames) {
+  const grid = document.getElementById(containerId);
+  groupNames.forEach(name => {
+    const label = document.createElement("label");
+    label.className = "reactive-field";
+    label.innerHTML = `<span>${GROUP_LABELS[name] || name}</span><input type="color" id="cr-group-${name}">`;
+    grid.appendChild(label);
+    const input = label.querySelector("input");
+    groupInputs[name] = input;
+    input.addEventListener("input", () => sendLiveUpdate());
+  });
+}
+
+Object.entries(GROUP_SECTIONS).forEach(([section, names]) => {
+  buildGroupGrid(`cr-group-${section}`, names);
+});
+
+// ---- live update / save --------------------------------------------------
+
+function readStick(prefix) {
+  return {
+    idle: hexToRgb(document.getElementById(`cr-${prefix}-idle`).value),
+    tier1: hexToRgb(document.getElementById(`cr-${prefix}-tier1`).value),
+    tier2: hexToRgb(document.getElementById(`cr-${prefix}-tier2`).value),
+  };
+}
+function writeStick(prefix, rgb) {
+  document.getElementById(`cr-${prefix}-idle`).value = rgbToHex(...rgb);
+  document.getElementById(`cr-${prefix}-tier1`).value = rgbToHex(...rgb);
+  document.getElementById(`cr-${prefix}-tier2`).value = rgbToHex(...rgb);
+}
+
+function currentSettings() {
+  const button_colors = {};
+  for (const name in groupInputs) {
+    button_colors[name] = hexToRgb(groupInputs[name].value);
+  }
+  return {
+    background_enabled: document.getElementById("cr-bg-enabled").checked,
+    background_color: hexToRgb(document.getElementById("cr-bg").value),
+    left_stick: readStick("left"),
+    right_stick: readStick("right"),
+    button_colors,
+    deadzone: parseInt(document.getElementById("cr-deadzone").value, 10) / 100,
+  };
+}
+
+const sendLiveUpdate = throttle(() => {
+  post("/controller_reactive/settings", currentSettings());
+}, 150);
+
+document.getElementById("cr-bg-enabled").addEventListener("change", sendLiveUpdate);
+document.getElementById("cr-bg").addEventListener("input", sendLiveUpdate);
+["left-idle", "left-tier1", "left-tier2", "right-idle", "right-tier1", "right-tier2"].forEach(id => {
+  document.getElementById(`cr-${id}`).addEventListener("input", sendLiveUpdate);
+});
+document.getElementById("cr-deadzone").addEventListener("input", (e) => {
+  document.getElementById("cr-deadzone-val").textContent = `${e.target.value}%`;
+  sendLiveUpdate();
+});
+
+document.getElementById("cr-save-btn").addEventListener("click", async () => {
+  const res = await post("/controller_reactive/settings/save", currentSettings());
+  if (res && res.ok) toast("Settings saved");
+});
+
+document.getElementById("cr-default-btn").addEventListener("click", async () => {
+  const res = await fetch("/controller_reactive/defaults");
+  const defaults = await res.json();
+  document.getElementById("cr-bg-enabled").checked = !!defaults.background_enabled;
+  document.getElementById("cr-bg").value = rgbToHex(...defaults.background_color);
+  writeStick("left", defaults.group_color);
+  writeStick("right", defaults.group_color);
+  document.getElementById("cr-deadzone").value = Math.round(defaults.deadzone * 100);
+  document.getElementById("cr-deadzone-val").textContent = `${Math.round(defaults.deadzone * 100)}%`;
+  for (const name in groupInputs) {
+    groupInputs[name].value = rgbToHex(...defaults.group_color);
+  }
+  sendLiveUpdate();
+  toast("Reset to default -- click Save to keep it");
+});
+
+// ---- enable / disable -----------------------------------------------------
+
+document.getElementById("cr-enabled").addEventListener("change", async (e) => {
+  if (e.target.checked) {
+    const res = await post("/controller_reactive/enable");
+    if (!res || !res.ok) {
+      e.target.checked = false;
+      toast((res && res.error) || "failed to enable", true);
+    }
+  } else {
+    await post("/controller_reactive/disable");
+  }
+});
+
+// ---- init -----------------------------------------------------------------
+
+async function init() {
+  const [settings, status] = await Promise.all([
+    fetch("/controller_reactive/settings").then(r => r.json()),
+    fetch("/controller_reactive/status").then(r => r.json()),
+  ]);
+
+  document.getElementById("cr-bg-enabled").checked = settings.background_enabled !== false;
+  document.getElementById("cr-bg").value = rgbToHex(...settings.background_color);
+  document.getElementById("cr-left-idle").value = rgbToHex(...settings.left_stick.idle);
+  document.getElementById("cr-left-tier1").value = rgbToHex(...settings.left_stick.tier1);
+  document.getElementById("cr-left-tier2").value = rgbToHex(...settings.left_stick.tier2);
+  document.getElementById("cr-right-idle").value = rgbToHex(...settings.right_stick.idle);
+  document.getElementById("cr-right-tier1").value = rgbToHex(...settings.right_stick.tier1);
+  document.getElementById("cr-right-tier2").value = rgbToHex(...settings.right_stick.tier2);
+  const deadzonePct = Math.round(settings.deadzone * 100);
+  document.getElementById("cr-deadzone").value = deadzonePct;
+  document.getElementById("cr-deadzone-val").textContent = `${deadzonePct}%`;
+  for (const name in groupInputs) {
+    const rgb = settings.button_colors[name] || [0, 100, 0];
+    groupInputs[name].value = rgbToHex(...rgb);
+  }
+
+  document.getElementById("cr-enabled").checked = !!status.enabled;
+  document.getElementById("connection-status").textContent = status.connected
+    ? "Controller connected"
+    : "No controller detected (USB only for now)";
+}
+
+init();
+</script>
+
+</body>
+</html>

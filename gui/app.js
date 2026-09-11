@@ -766,6 +766,14 @@ function wireFooter() {
     }
   });
 
+  document.getElementById("controller-reactive-btn").addEventListener("click", () => {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_controller_reactive) {
+      window.pywebview.api.open_controller_reactive();
+    } else {
+      toast("Controller Reactive window requires the desktop app");
+    }
+  });
+
   document.getElementById("off-btn").addEventListener("click", async () => {
     await post("/off");
     state.activePreset = null;

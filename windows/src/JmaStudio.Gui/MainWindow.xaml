@@ -1,0 +1,274 @@
+<Window x:Class="JmaStudio.Gui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:JmaStudio.Gui"
+        mc:Ignorable="d"
+        Title="JMA Studio" Height="820" Width="1180"
+        Icon="pack://application:,,,/Assets/app_icon.ico"
+        Background="#0B0B12" Foreground="#EAEAF2"
+        FontFamily="Segoe UI">
+    <!-- Shared control theme (buttons, sliders, combos, checkboxes, preset
+         card styles) lives in App.xaml's Application.Resources now, not
+         here. Promoted there once the Lightbar window needed the same
+         styles too. -->
+
+    <DockPanel LastChildFill="True">
+
+        <!-- Top bar -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" Padding="16,10">
+            <DockPanel>
+                <Image Source="pack://application:,,,/Assets/logo.png" Height="48" VerticalAlignment="Center" ToolTip="JMA Studio"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" DockPanel.Dock="Right">
+                    <Ellipse x:Name="HwStatusDot" Width="10" Height="10" Fill="Gray" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="HwStatusLabel" Text="checking..." VerticalAlignment="Center" Margin="0,0,16,0" Foreground="{StaticResource SubTextBrush}"/>
+                    <Button x:Name="LightbarBtn" Content="Lightbar" Style="{StaticResource BtnGhost}" Click="LightbarBtn_Click"/>
+                    <Button x:Name="ControllerReactiveBtn" Content="Controller Reactive" Style="{StaticResource BtnGhost}" Click="ControllerReactiveBtn_Click"/>
+                    <Button x:Name="DiagnosticsBtn" Content="Diagnostics" Style="{StaticResource BtnGhost}" Click="DiagnosticsBtn_Click"/>
+                    <Button x:Name="OffBtn" Content="Off" Style="{StaticResource BtnGhost}" Click="OffBtn_Click"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Footer -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" Padding="16,10">
+            <DockPanel>
+                <Button x:Name="SavePresetBtn" Content="Save current as preset" Style="{StaticResource BtnAccent}" Click="SavePresetBtn_Click"/>
+                <Button x:Name="SetDefaultBtn" Content="Set as startup default" Style="{StaticResource BtnGhost}" Click="SetDefaultBtn_Click"/>
+                <TextBlock x:Name="ToastText" Foreground="{StaticResource SubTextBrush}" VerticalAlignment="Center" Margin="16,0,0,0" DockPanel.Dock="Right" HorizontalAlignment="Right"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Main content -->
+        <ScrollViewer x:Name="MainScrollViewer" VerticalScrollBarVisibility="Auto" Padding="16" PreviewMouseWheel="MainScrollViewer_PreviewMouseWheel">
+            <StackPanel>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Live Preview" Style="{StaticResource PanelHeader}"/>
+                            <TextBlock x:Name="CurrentEffectLabel" Text="--" Foreground="{StaticResource SubTextBrush}" HorizontalAlignment="Right"/>
+                        </DockPanel>
+                        <Border x:Name="PreviewBoardHost" Background="#101013" CornerRadius="6" Padding="10" SizeChanged="PreviewBoardHost_SizeChanged">
+                            <Canvas x:Name="KeyboardCanvas" HorizontalAlignment="Center"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="Presets" Style="{StaticResource PanelHeader}"/>
+                        <ItemsControl x:Name="PresetsList">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource PresetCardStyle}" Tag="{Binding Name}" MouseLeftButtonUp="PresetCard_Click">
+                                        <Grid>
+                                            <StackPanel Margin="14,12">
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" TextWrapping="Wrap" Margin="0,0,20,0"/>
+                                                <TextBlock Text="{Binding Effect}" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                            <!-- Startup-default marker (settled 2026-09-10): a green
+                                                 checkmark on whichever card is currently GET /default's
+                                                 target, so it doesn't need its own separate label/list. -->
+                                            <TextBlock Text="&#x2713;" FontWeight="Bold" FontSize="14" Foreground="{StaticResource SuccessBrush}"
+                                                       ToolTip="Startup default" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,32,10,0">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsDefault}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <Button Content="&#x2715;" Style="{StaticResource PresetDeleteButtonStyle}" Click="DeletePreset_Click" Tag="{Binding Name}"
+                                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="Quick Effects" Style="{StaticResource PanelHeader}"/>
+                        <ItemsControl x:Name="EffectsList">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Content="{Binding DisplayName}" Style="{StaticResource BtnGhost}" Margin="0,0,8,8" Padding="12,8" Click="QuickEffect_Click" Tag="{Binding Name}"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Gradient tuning, ported from gui/index.html's "Gradient"
+                     panel. Zone count/brightness are fixed controls; the
+                     per-zone color/boundary rows are variable-count so
+                     they're built in code (MainWindow.Gradient.cs) into
+                     GradientColorsPanel/GradientBoundariesPanel. -->
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Gradient" Style="{StaticResource PanelHeader}"/>
+                            <CheckBox x:Name="GradientLiveCheck" Content="Apply live" IsChecked="True" HorizontalAlignment="Right" Foreground="{StaticResource SubTextBrush}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                            <TextBlock Text="Zones" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource SubTextBrush}"/>
+                            <ComboBox x:Name="GradientZoneCountCombo" Width="56" SelectionChanged="GradientZoneCountCombo_SelectionChanged">
+                                <ComboBoxItem Content="2"/>
+                                <ComboBoxItem Content="3"/>
+                                <ComboBoxItem Content="4"/>
+                                <ComboBoxItem Content="5"/>
+                            </ComboBox>
+                            <TextBlock Text="Brightness" VerticalAlignment="Center" Margin="24,0,8,0" Foreground="{StaticResource SubTextBrush}"/>
+                            <Slider x:Name="GradientBrightnessSlider" Width="160" Minimum="0" Maximum="1" ValueChanged="GradientBrightnessSlider_ValueChanged" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="GradientBrightnessLabel" Text="65%" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="{StaticResource SubTextBrush}" Width="36"/>
+                        </StackPanel>
+                        <WrapPanel x:Name="GradientColorsPanel" Margin="0,0,0,12"/>
+                        <WrapPanel x:Name="GradientBoundariesPanel"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Reactive Typing tuning, ported from gui/index.html's
+                     "Reactive Typing" panel. All controls are fixed/known,
+                     so they're declared here directly (see
+                     MainWindow.TypingReactive.cs for the logic). -->
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Reactive Typing" Style="{StaticResource PanelHeader}"/>
+                            <CheckBox x:Name="TrLiveCheck" Content="Apply live" IsChecked="True" HorizontalAlignment="Right" Foreground="{StaticResource SubTextBrush}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <WrapPanel Margin="0,0,0,12">
+                            <!-- IsChecked is set in code (InitializeTypingReactivePanel), not
+                                 here: setting it to a non-default value as a XAML attribute on
+                                 a control with Checked/Unchecked handlers wired in this same
+                                 file fires those handlers mid-parse, before later-declared named
+                                 elements (e.g. TrStyleCombo) are assigned yet, which crashed
+                                 with a NullReferenceException from inside
+                                 UpdateTypingReactiveLabels() the first time this was tried. -->
+                            <CheckBox x:Name="TrEnabledCheck" Content="Enable typing-reactive chase" Margin="0,0,20,8" Checked="TrOption_Changed" Unchecked="TrOption_Changed"/>
+                            <CheckBox x:Name="TrBoltResetCheck" Content="Bolt Reset" Margin="0,0,20,8" Checked="TrOption_Changed" Unchecked="TrOption_Changed"/>
+                            <CheckBox x:Name="TrUseGradientCheck" Content="Use Gradient as background" Margin="0,0,20,8" Checked="TrUseGradientCheck_Changed" Unchecked="TrUseGradientCheck_Changed"/>
+                            <CheckBox x:Name="TrUseCustomKeysCheck" Content="Use Custom Key Colors as background" Margin="0,0,20,8" Checked="TrUseCustomKeysCheck_Changed" Unchecked="TrUseCustomKeysCheck_Changed"/>
+                        </WrapPanel>
+                        <StackPanel x:Name="TrBaseColorRow" Orientation="Horizontal" Margin="0,0,0,12" Visibility="Collapsed">
+                            <TextBlock Text="Base color" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource SubTextBrush}"/>
+                            <local:ColorSwatchButton x:Name="TrBaseSwatch"/>
+                        </StackPanel>
+                        <!-- Mirrors gui/style.css's #tr-reactive-fields wrapper: all
+                             bolt-tuning controls hide together when the chase itself
+                             is disabled, since they're meaningless for a bare
+                             gradient/custom-keys/static background. -->
+                        <StackPanel x:Name="TrReactiveFieldsPanel">
+                            <WrapPanel Margin="0,0,0,12">
+                                <StackPanel Margin="0,0,24,0">
+                                    <TextBlock Text="Bright / bolt color" Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,4"/>
+                                    <local:ColorSwatchButton x:Name="TrBrightSwatch"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,24,0">
+                                    <TextBlock Text="Bolt shape" Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="TrShapeCombo" Width="140" SelectionChanged="TrOption_SelectionChanged">
+                                        <ComboBoxItem Content="Rays (8-point star)" Tag="Rays"/>
+                                        <ComboBoxItem Content="Radial (true ring)" Tag="Radial"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="Bolt style" Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,4"/>
+                                    <ComboBox x:Name="TrStyleCombo" Width="120" SelectionChanged="TrStyleCombo_SelectionChanged">
+                                        <ComboBoxItem Content="Solid" Tag="Solid"/>
+                                        <ComboBoxItem Content="Rainbow puke" Tag="Rainbow"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </WrapPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Flash decay (s)"/> <Run x:Name="TrDecayLabel" Text="0.6s"/>
+                                </TextBlock>
+                                <Slider x:Name="TrDecaySlider" Minimum="0.1" Maximum="2" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Bolt speed"/> <Run x:Name="TrSpeedLabel" Text="12"/>
+                                </TextBlock>
+                                <Slider x:Name="TrSpeedSlider" Minimum="2" Maximum="30" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Bolt tail length"/> <Run x:Name="TrTailLabel" Text="3"/>
+                                </TextBlock>
+                                <Slider x:Name="TrTailSlider" Minimum="0.5" Maximum="10" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Bloom max distance"/> <Run x:Name="TrMaxDistLabel" Text="18.5"/>
+                                </TextBlock>
+                                <Slider x:Name="TrMaxDistSlider" Minimum="0" Maximum="18.5" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel x:Name="TrFlickerRow" Visibility="Collapsed">
+                                <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="11" Margin="0,0,0,2">
+                                    <Run Text="Rainbow flicker speed"/> <Run x:Name="TrFlickerLabel" Text="6"/>
+                                </TextBlock>
+                                <Slider x:Name="TrFlickerSlider" Minimum="1" Maximum="20" ValueChanged="TrOption_ValueChanged"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Custom Key Colors painter, ported from gui/index.html's
+                     "Custom Key Colors" panel. The per-key grid is built in
+                     code (MainWindow.CustomKeys.cs), same pattern as the
+                     live-preview keyboard but with click-to-select instead
+                     of just color polling. -->
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Custom Key Colors" Style="{StaticResource PanelHeader}"/>
+                            <CheckBox x:Name="CkLiveCheck" Content="Apply live" IsChecked="True" HorizontalAlignment="Right" Foreground="{StaticResource SubTextBrush}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <WrapPanel Margin="0,0,0,10">
+                            <TextBlock x:Name="CkSelectionLabel" Text="No keys selected -- click a key to select it (shift-click to add more)" VerticalAlignment="Center" Foreground="{StaticResource SubTextBrush}" Margin="0,0,16,8"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,16,8">
+                                <TextBlock Text="Default" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{StaticResource SubTextBrush}"/>
+                                <local:ColorSwatchButton x:Name="CkDefaultSwatch"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,16,8">
+                                <TextBlock Text="Paint" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{StaticResource SubTextBrush}"/>
+                                <local:ColorSwatchButton x:Name="CkPaintSwatch"/>
+                            </StackPanel>
+                            <Button Content="Select all" Style="{StaticResource BtnGhost}" Click="CkSelectAll_Click" Margin="0,0,4,8"/>
+                            <Button Content="Deselect" Style="{StaticResource BtnGhost}" Click="CkSelectNone_Click" Margin="0,0,4,8"/>
+                            <Button Content="Reset selected" Style="{StaticResource BtnGhost}" Click="CkResetSelected_Click" Margin="0,0,4,8"/>
+                            <Button Content="Clear all" Style="{StaticResource BtnGhost}" Click="CkClearAll_Click" Margin="0,0,4,8"/>
+                            <Button Content="Pull current colors" Style="{StaticResource BtnAccent}" Click="CkPullCurrent_Click" Margin="0,0,0,8"/>
+                        </WrapPanel>
+                        <WrapPanel x:Name="CkRecentColorsPanel" Margin="0,0,0,10">
+                            <TextBlock x:Name="CkRecentEmptyLabel" Text="Recently used: none yet" Foreground="{StaticResource SubTextBrush}" FontSize="11" VerticalAlignment="Center"/>
+                        </WrapPanel>
+                        <Border x:Name="CkPreviewBoardHost" Background="#101013" CornerRadius="6" Padding="10" SizeChanged="CkPreviewBoardHost_SizeChanged">
+                            <Canvas x:Name="CkKeyboardCanvas" HorizontalAlignment="Center"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+    </DockPanel>
+</Window>

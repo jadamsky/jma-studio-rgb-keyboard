@@ -1,0 +1,35 @@
+{
+  "Enabled": true,
+  "ZoneBoundaries": [
+    4,
+    8,
+    10.75
+  ],
+  "BackgroundColor": {
+    "R": 0,
+    "G": 8,
+    "B": 255
+  },
+  "ZoneFlashColors": {
+    "1": {
+      "R": 255,
+      "G": 0,
+      "B": 0
+    },
+    "2": {
+      "R": 255,
+      "G": 0,
+      "B": 0
+    },
+    "3": {
+      "R": 255,
+      "G": 0,
+      "B": 0
+    }
+  },
+  "AllFlashColor": {
+    "R": 251,
+    "G": 0,
+    "B": 255
+  }
+}

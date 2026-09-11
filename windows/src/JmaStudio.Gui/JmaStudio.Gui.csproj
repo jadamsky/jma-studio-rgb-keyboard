@@ -1,0 +1,61 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- WPF has no built-in color picker. Rather than pull in a third-party
+         control library for one widget, System.Windows.Forms.ColorDialog
+         (a full RGB/hex picker) is used via interop; see ColorSwatchButton.cs. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Platforms>x64</Platforms>
+    <!-- Same icon gui.py sets on its own native window (ICON_PATH).
+         Embeds into the compiled .exe itself, so it shows in Explorer,
+         the taskbar, and Alt-Tab even before any window opens, not just
+         inside a window's own title bar. -->
+    <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UseWindowsForms auto-adds a global "using System.Windows.Forms;",
+         which collides with WPF's own System.Windows.* types (Color,
+         ComboBox, Application, KeyEventArgs, ...) across every file in the
+         project. The only WinForms type actually used (ColorDialog, in
+         ColorSwatchButton.cs) is already fully-qualified there, so this is
+         safe to drop. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reference asset for the Lightbar window's recolored bar
+         illustration, see LightbarIllustration.cs. Embedded into the
+         assembly (Resource build action) rather than copied as loose
+         Content, so no extra deployment step is needed. -->
+    <Resource Include="Assets\lightbar_bar.png" />
+    <!-- Same .ico as ApplicationIcon above, also embedded as a WPF
+         pack resource so each Window's own Icon property (title bar/
+         Alt-Tab per-window icon, distinct from the exe-level one) can
+         load it via pack URI. The app_icon/logo assets were originally
+         made for gui.py/gui/index.html's own topbar. -->
+    <Resource Include="Assets\app_icon.ico" />
+    <Resource Include="Assets\logo.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Diagnostics window's emergency-action gating: a cheap process-
+         list scan (Win32_Process CommandLine) to tell which stack
+         (Python vs. C#) is currently the one actually driving hardware,
+         independent of whether this GUI's own Service is reachable. -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JmaStudio.Hardware\JmaStudio.Hardware.csproj" />
+    <ProjectReference Include="..\JmaStudio.Effects\JmaStudio.Effects.csproj" />
+    <ProjectReference Include="..\JmaStudio.Presets\JmaStudio.Presets.csproj" />
+  </ItemGroup>
+
+</Project>

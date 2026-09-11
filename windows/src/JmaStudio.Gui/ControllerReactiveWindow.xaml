@@ -1,0 +1,137 @@
+<Window x:Class="JmaStudio.Gui.ControllerReactiveWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:JmaStudio.Gui"
+        mc:Ignorable="d"
+        Title="JMA Studio -- Controller Reactive" Height="900" Width="720"
+        Icon="pack://application:,,,/Assets/app_icon.ico"
+        Background="#0B0B12" Foreground="#EAEAF2"
+        FontFamily="Segoe UI">
+    <DockPanel LastChildFill="True">
+
+        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" Padding="16,10">
+            <DockPanel>
+                <StackPanel>
+                    <TextBlock Text="Controller Reactive" FontSize="18" FontWeight="Bold"/>
+                    <TextBlock x:Name="ConnectionStatusText" Text="--" FontSize="12" Foreground="{StaticResource SubTextBrush}" Margin="0,2,0,0"/>
+                </StackPanel>
+                <CheckBox x:Name="EnabledCheck" Content="Enabled -- overrides everything else on the keyboard"
+                          HorizontalAlignment="Right" VerticalAlignment="Center" Checked="EnabledCheck_Changed" Unchecked="EnabledCheck_Changed"/>
+            </DockPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" Padding="16,10">
+            <DockPanel>
+                <Button x:Name="SaveBtn" Content="Save current settings" Style="{StaticResource BtnAccent}" Click="SaveBtn_Click"/>
+                <Button x:Name="DefaultBtn" Content="Default" Style="{StaticResource BtnGhost}" Click="DefaultBtn_Click"/>
+                <TextBlock x:Name="ToastText" Foreground="{StaticResource SubTextBrush}" VerticalAlignment="Center" Margin="16,0,0,0" DockPanel.Dock="Right" HorizontalAlignment="Right"/>
+            </DockPanel>
+        </Border>
+
+        <ScrollViewer x:Name="MainScrollViewer" VerticalScrollBarVisibility="Auto" Padding="16" PreviewMouseWheel="MainScrollViewer_PreviewMouseWheel">
+            <StackPanel>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Background" Style="{StaticResource PanelHeader}"/>
+                            <CheckBox x:Name="BgEnabledCheck" Content="Enabled" HorizontalAlignment="Right" Checked="LiveOption_Changed" Unchecked="LiveOption_Changed"/>
+                        </DockPanel>
+                        <StackPanel HorizontalAlignment="Left">
+                            <TextBlock Text="Background" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                            <local:ColorSwatchButton x:Name="BgSwatch"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="Left Stick" Style="{StaticResource PanelHeader}"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource SubTextBrush}" FontSize="12" Margin="0,0,0,14"
+                                   Text="Same color regardless of direction (up/down/left/right) -- only how far it's pushed matters."/>
+                        <WrapPanel>
+                            <StackPanel Margin="0,0,20,0">
+                                <TextBlock Text="Idle (0-deadzone)" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="LeftIdleSwatch"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,20,0">
+                                <TextBlock Text="Tier 1 (deadzone-50%)" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="LeftTier1Swatch"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="Tier 2 (51-100%)" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="LeftTier2Swatch"/>
+                            </StackPanel>
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="Right Stick" Style="{StaticResource PanelHeader}"/>
+                        <WrapPanel>
+                            <StackPanel Margin="0,0,20,0">
+                                <TextBlock Text="Idle (0-deadzone)" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="RightIdleSwatch"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,20,0">
+                                <TextBlock Text="Tier 1 (deadzone-50%)" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="RightTier1Swatch"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="Tier 2 (51-100%)" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="RightTier2Swatch"/>
+                            </StackPanel>
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="Deadzone" Style="{StaticResource PanelHeader}"/>
+                        <TextBlock Foreground="{StaticResource SubTextBrush}" FontSize="12" Margin="0,0,0,10"
+                                   Text="Shared by both sticks -- also sets the boundary between the Idle and Tier 1 colors above."/>
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="DeadzoneSlider" Width="300" Minimum="0" Maximum="50" ValueChanged="DeadzoneSlider_ValueChanged"/>
+                            <TextBlock x:Name="DeadzoneLabel" Text="15%" VerticalAlignment="Center" Margin="10,0,0,0" Foreground="{StaticResource SubTextBrush}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="Face Buttons" Style="{StaticResource PanelHeader}"/>
+                        <WrapPanel x:Name="FaceGroupPanel"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="D-Pad" Style="{StaticResource PanelHeader}"/>
+                        <WrapPanel x:Name="DpadGroupPanel"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <TextBlock Text="Shoulders &amp; Triggers" Style="{StaticResource PanelHeader}"/>
+                        <WrapPanel x:Name="ShouldersGroupPanel"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Paddles &amp; Fn" Style="{StaticResource PanelHeader}"/>
+                            <TextBlock Text="(DualSense Edge only)" FontSize="11" Foreground="{StaticResource SubTextBrush}" HorizontalAlignment="Right"/>
+                        </DockPanel>
+                        <WrapPanel x:Name="PaddlesGroupPanel"/>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>
