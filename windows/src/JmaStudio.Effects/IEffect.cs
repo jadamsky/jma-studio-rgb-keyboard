@@ -27,6 +27,14 @@ public sealed class EffectContext
     /// effects, not reflection-based discovery).</summary>
     public EffectRegistry? Registry { get; init; }
 
+    /// <summary>The render loop's `t` value at the moment the current
+    /// effect was activated (DaemonState.EffectStartTime) -- lets an
+    /// effect compute "seconds since I was turned on" via `t -
+    /// EffectStartTime` instead of only seeing the Service's raw global
+    /// uptime. Added for RainEffect's "always start at the low point of
+    /// the shower-intensity cycle" behavior, but any effect can use it.</summary>
+    public double EffectStartTime { get; init; }
+
     public static readonly EffectContext Empty = new();
 }
 

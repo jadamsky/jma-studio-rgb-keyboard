@@ -27,7 +27,8 @@ public sealed record LayoutResponse(LayoutCell[] Cells, int NumCells);
 
 public sealed record DefaultPresetResponse(string? DefaultPreset);
 public sealed record CaptureZonesResponse(IReadOnlyList<double> ZoneBoundaries, int NumZones);
-public sealed record ControllerReactiveStatusResponse(bool Connected, bool Enabled);
+public sealed record ControllerReactiveStatusResponse(bool Connected, bool Enabled, bool Bluetooth);
+public sealed record ControllerDiscoverResponse(bool Found, bool Connected, bool Bluetooth);
 public sealed record ControllerReactiveDefaultsResponse(
     bool BackgroundEnabled, RgbColor BackgroundColor, RgbColor GroupColor, double Deadzone);
 
@@ -47,7 +48,8 @@ public sealed record DiagnosticsStatusResponse(
     DiagnosticsPerfInfo Perf, AcerLightingServiceInfo AcerLightingService,
     string[] SuspiciousProcesses, PythonInstallInfo Python);
 
-public sealed record RescanResponse(bool KeyboardDetected, bool LightbarDetected, bool ControllerDetected);
+public sealed record BatteryStatusResponse(bool HasBattery, bool OnBattery, int Percent);
+public sealed record RescanResponse(bool KeyboardDetected, bool LightbarDetected, bool ControllerDetected, bool ControllerConnected);
 public sealed record ControllerLiveResponse(bool Connected, ControllerState? State);
 public sealed record LogsResponse(string[] Lines);
 
@@ -277,6 +279,64 @@ public sealed class ApiClient
 
     public async Task<ControllerReactiveDefaultsResponse?> GetControllerReactiveDefaultsAsync() =>
         await _http.GetFromJsonAsync<ControllerReactiveDefaultsResponse>("/controller-reactive/defaults", Json);
+
+    /// <summary>Phase 8 (V2) Feature 3: searches USB and Bluetooth in one
+    /// scan and connects to whatever's found -- see Controller.
+    /// TryDiscover's own doc comment. Fixes the real bug this feature
+    /// originated from (connecting the controller after the Service is
+    /// already running previously never worked).</summary>
+    public async Task<ControllerDiscoverResponse?> DiscoverControllerAsync()
+    {
+        var response = await _http.PostAsync("/controller-reactive/discover", null);
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<ControllerDiscoverResponse>(Json)
+            : null;
+    }
+
+    // ---- idle screensaver (Phase 8, V2) ----
+
+    /// <summary>Pinged by IdleActivityMonitor only when it detects NEW
+    /// keyboard/mouse input since its last check -- swallows connection
+    /// failures the same way ShutdownServiceAsync/PostKeypressAsync do,
+    /// since a missed ping here should never throw.</summary>
+    public async Task<bool> PingIdleActivityAsync()
+    {
+        try
+        {
+            return (await _http.PostAsync("/idle-activity", null)).IsSuccessStatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (TaskCanceledException)
+        {
+            return false;
+        }
+    }
+
+    public async Task<IdleScreensaverConfig?> GetIdleScreensaverConfigAsync() =>
+        await _http.GetFromJsonAsync<IdleScreensaverConfig>("/idle-screensaver/config", Json);
+
+    public async Task<bool> SetIdleScreensaverConfigAsync(IdleScreensaverConfig config)
+    {
+        var response = await _http.PostAsJsonAsync("/idle-screensaver/config", config, Json);
+        return response.IsSuccessStatusCode;
+    }
+
+    // ---- low-battery override (Phase 8, V2) ----
+
+    public async Task<LowBatteryOverrideConfig?> GetLowBatteryOverrideConfigAsync() =>
+        await _http.GetFromJsonAsync<LowBatteryOverrideConfig>("/battery-override/config", Json);
+
+    public async Task<bool> SetLowBatteryOverrideConfigAsync(LowBatteryOverrideConfig config)
+    {
+        var response = await _http.PostAsJsonAsync("/battery-override/config", config, Json);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<BatteryStatusResponse?> GetBatteryStatusAsync() =>
+        await _http.GetFromJsonAsync<BatteryStatusResponse>("/battery/status", Json);
 
     // ---- diagnostics ----
 

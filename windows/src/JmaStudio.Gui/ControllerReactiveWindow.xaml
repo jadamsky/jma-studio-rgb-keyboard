@@ -17,8 +17,15 @@
                     <TextBlock Text="Controller Reactive" FontSize="18" FontWeight="Bold"/>
                     <TextBlock x:Name="ConnectionStatusText" Text="--" FontSize="12" Foreground="{StaticResource SubTextBrush}" Margin="0,2,0,0"/>
                 </StackPanel>
-                <CheckBox x:Name="EnabledCheck" Content="Enabled -- overrides everything else on the keyboard"
-                          HorizontalAlignment="Right" VerticalAlignment="Center" Checked="EnabledCheck_Changed" Unchecked="EnabledCheck_Changed"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <!-- Phase 8 (V2) Feature 3: searches USB and Bluetooth in one
+                         scan, no separate transport picker. See Controller.
+                         TryDiscover's own doc comment. Placed at the top per the
+                         user's explicit request. -->
+                    <Button x:Name="DiscoverBtn" Content="Discover" Style="{StaticResource BtnGhost}" Click="DiscoverBtn_Click" Margin="0,0,16,0"/>
+                    <CheckBox x:Name="EnabledCheck" Content="Enabled -- overrides everything else on the keyboard"
+                              Checked="EnabledCheck_Changed" Unchecked="EnabledCheck_Changed"/>
+                </StackPanel>
             </DockPanel>
         </Border>
 
@@ -116,7 +123,7 @@
 
                 <Border Style="{StaticResource Panel}">
                     <StackPanel>
-                        <TextBlock Text="Shoulders &amp; Triggers" Style="{StaticResource PanelHeader}"/>
+                        <TextBlock Text="Shoulders, Triggers &amp; Stick Clicks" Style="{StaticResource PanelHeader}"/>
                         <WrapPanel x:Name="ShouldersGroupPanel"/>
                     </StackPanel>
                 </Border>

@@ -31,6 +31,7 @@ public partial class App : Application
     private Mutex? _instanceMutex;
     private TrayIconManager? _trayIcon;
     private KeypressForwarder? _keypressForwarder;
+    private IdleActivityMonitor? _idleActivityMonitor;
 
     /// <summary>True only while the tray's "Close and End Service" is
     /// actually tearing the app down. MainWindow.Closing checks this to
@@ -76,10 +77,19 @@ public partial class App : Application
         // window is hidden in the tray.
         _keypressForwarder = new KeypressForwarder(new ApiClient());
         _keypressForwarder.Start();
+
+        // Phase 8 (V2) idle screensaver: keyboard/mouse activity source.
+        // Same whole-lifetime pattern as the tray icon and keypress
+        // forwarder above -- needs to keep pinging even while MainWindow
+        // is hidden in the tray, since that's exactly when the
+        // screensaver matters most.
+        _idleActivityMonitor = new IdleActivityMonitor(new ApiClient());
+        _idleActivityMonitor.Start();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _idleActivityMonitor?.Dispose();
         _keypressForwarder?.Dispose();
         _trayIcon?.Dispose();
         base.OnExit(e);

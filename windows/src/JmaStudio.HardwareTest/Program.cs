@@ -9,6 +9,7 @@
 
 using System.Diagnostics;
 using System.Management;
+using HidSharp;
 using JmaStudio.Effects;
 using JmaStudio.Hardware;
 using JmaStudio.HardwareTest;
@@ -93,6 +94,12 @@ try
         case "switch-to-csharp":
             SwitchToCSharp(args);
             break;
+        case "controller-raw-dump":
+            ControllerRawDump(args);
+            break;
+        case "controller-enhance-test":
+            ControllerEnhanceTest(args);
+            break;
         default:
             Console.WriteLine($"Unknown command: {command}");
             PrintUsage();
@@ -161,6 +168,12 @@ void PrintUsage()
                                                               inverse -- kill the Python daemon/tray/GUI, disable
                                                               its autostart task, launch the C# Service+GUI.
                                                               REQUIRES ADMINISTRATOR
+
+          controller-raw-dump [seconds]                      Phase 8 Feature 3 investigation: lists every matching
+                                                              HID device (USB and Bluetooth-paired both show up here)
+                                                              and dumps raw report bytes live for [seconds] (default
+                                                              20) so the DualSense's Bluetooth report format can be
+                                                              confirmed empirically.
         """);
 }
 
@@ -175,6 +188,186 @@ static void KeyboardFind()
     Console.WriteLine($"FOUND: {device.DevicePath}");
     Console.WriteLine($"  Product: {device.GetProductName()}");
     Console.WriteLine($"  Manufacturer: {device.GetManufacturer()}");
+}
+
+// Phase 8 (V2) Feature 3 investigation tool: lists every HID device
+// matching the DualSense's VID/PID (both USB and Bluetooth-paired
+// devices show up in the same HidSharp enumeration, per JmaStudio.
+// Hardware.Controller's own FindControllerDevice -- this just doesn't
+// stop at the first match), then dumps raw report bytes live so the
+// Bluetooth report format (different report ID, extra framing per
+// community reverse-engineering) can be confirmed empirically against
+// this real controller/machine rather than assumed. Not part of the
+// shipped Controller.cs parsing logic -- purely a one-off diagnostic.
+// Tests the Bluetooth "enhanced report" trick (reading feature report
+// 0x05 -- see Controller.TryEnableBluetoothEnhancedMode's own header
+// comment for the community sources) WITHOUT needing anyone to touch
+// the controller: if it works, the accelerometer/gyro bytes should
+// start showing real non-zero values within a couple of seconds just
+// from gravity/ambient vibration, even with the controller sitting
+// still on a desk -- a self-verifying test, no button presses needed.
+static void ControllerEnhanceTest(string[] args)
+{
+    const int vendorId = 0x054C;
+    int[] productIds = { 0x0CE6, 0x0DF2 };
+    const int usbMaxReportLength = 64;
+
+    HidDevice? device = null;
+    foreach (int pid in productIds)
+    {
+        foreach (HidDevice d in DeviceList.Local.GetHidDevices(vendorId, pid))
+        {
+            if (d.GetMaxInputReportLength() > usbMaxReportLength) { device = d; break; }
+        }
+        if (device is not null) break;
+    }
+
+    if (device is null)
+    {
+        Console.WriteLine("NOT FOUND: no Bluetooth-paired DualSense/Edge (checked by maxInputReportLength > 64).");
+        return;
+    }
+
+    Console.WriteLine($"Found Bluetooth device: {device.DevicePath}");
+    Console.WriteLine($"maxInputReportLength={device.GetMaxInputReportLength()} maxFeatureReportLength={device.GetMaxFeatureReportLength()}");
+
+    if (!device.TryOpen(out HidStream? stream) || stream is null)
+    {
+        Console.WriteLine("FAILED to open the device.");
+        return;
+    }
+    using (stream)
+    {
+        stream.ReadTimeout = 200;
+
+        Console.WriteLine();
+        Console.WriteLine("--- Reading feature report 0x05 (calibration) ---");
+        try
+        {
+            int len = device.GetMaxFeatureReportLength();
+            byte[] featureBuf = new byte[len];
+            featureBuf[0] = 0x05;
+            stream.GetFeature(featureBuf);
+            Console.WriteLine($"SUCCESS: GetFeature(0x05) returned {len} bytes: {Convert.ToHexString(featureBuf)}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"FAILED: GetFeature(0x05) threw {ex.GetType().Name}: {ex.Message}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("--- Watching bytes 10+ for 8s (should go non-zero if enhanced mode is now active, even at rest) ---");
+        int bufLen = Math.Max(64, device.GetMaxInputReportLength());
+        DateTime until = DateTime.UtcNow.AddSeconds(8);
+        bool sawNonZeroTail = false;
+        while (DateTime.UtcNow < until)
+        {
+            byte[] buf = new byte[bufLen];
+            int read;
+            try { read = stream.Read(buf, 0, buf.Length); }
+            catch { continue; }
+            if (read <= 10) continue;
+            for (int i = 10; i < read; i++)
+            {
+                if (buf[i] != 0) { sawNonZeroTail = true; break; }
+            }
+            if (sawNonZeroTail)
+            {
+                Console.WriteLine($"NON-ZERO TAIL SEEN: len={read}: {Convert.ToHexString(buf[..read])}");
+                break;
+            }
+        }
+        Console.WriteLine(sawNonZeroTail
+            ? "RESULT: enhanced mode looks ACTIVE -- bytes past offset 10 are populated."
+            : "RESULT: enhanced mode does NOT look active -- bytes past offset 10 stayed all-zero for 8s.");
+    }
+}
+
+static void ControllerRawDump(string[] args)
+{
+    int seconds = args.Length > 1 ? int.Parse(args[1]) : 20;
+    const int vendorId = 0x054C;
+    int[] productIds = { 0x0CE6, 0x0DF2 };
+    const int usagePage = 1;
+    const int usage = 5;
+
+    var matches = new List<HidDevice>();
+    foreach (int pid in productIds)
+    {
+        matches.AddRange(DeviceList.Local.GetHidDevices(vendorId, pid));
+    }
+
+    if (matches.Count == 0)
+    {
+        Console.WriteLine("NOT FOUND: no HID device matched VID 0x054C / PID 0x0CE6|0x0DF2 (USB or Bluetooth).");
+        return;
+    }
+
+    Console.WriteLine($"Found {matches.Count} matching HID device(s):");
+    for (int i = 0; i < matches.Count; i++)
+    {
+        HidDevice device = matches[i];
+        Console.WriteLine($"[{i}] path={device.DevicePath}");
+        Console.WriteLine($"    product={device.GetProductName()} manufacturer={device.GetManufacturer()} maxInputReportLength={device.GetMaxInputReportLength()}");
+        try
+        {
+            var descriptor = device.GetReportDescriptor();
+            bool usageMatch = descriptor.DeviceItems
+                .SelectMany(di => di.Usages.GetAllValues())
+                .Any(u => ((u >> 16) & 0xFFFF) == usagePage && (u & 0xFFFF) == usage);
+            Console.WriteLine($"    gamepadUsageMatch={usageMatch}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    (couldn't read report descriptor: {ex.Message})");
+        }
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"Dumping raw reports from each device for {seconds}s -- move sticks / press buttons now.");
+    Console.WriteLine("Format: [deviceIndex] len=N: hex bytes (only printed when the report changes)");
+
+    bool stop = false;
+    var threads = new List<Thread>();
+    for (int i = 0; i < matches.Count; i++)
+    {
+        int idx = i;
+        HidDevice device = matches[i];
+        var thread = new Thread(() =>
+        {
+            if (!device.TryOpen(out HidStream? stream) || stream is null)
+            {
+                Console.WriteLine($"[{idx}] could not open device.");
+                return;
+            }
+            using (stream)
+            {
+                stream.ReadTimeout = 200;
+                byte[] last = Array.Empty<byte>();
+                int bufLen = Math.Max(64, device.GetMaxInputReportLength());
+                while (!stop)
+                {
+                    byte[] buf = new byte[bufLen];
+                    int read;
+                    try { read = stream.Read(buf, 0, buf.Length); }
+                    catch { continue; }
+                    if (read <= 0) continue;
+                    byte[] actual = buf[..read];
+                    if (!actual.SequenceEqual(last))
+                    {
+                        last = actual;
+                        Console.WriteLine($"[{idx}] len={read}: {Convert.ToHexString(actual)}");
+                    }
+                }
+            }
+        }) { IsBackground = true };
+        threads.Add(thread);
+        thread.Start();
+    }
+
+    Thread.Sleep(TimeSpan.FromSeconds(seconds));
+    stop = true;
+    Console.WriteLine("Done.");
 }
 
 static void KeyboardStatic(string[] args)

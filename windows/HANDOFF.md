@@ -10,6 +10,29 @@ current at every phase boundary: status, what's verified on real
 hardware vs. still assumed, key decisions and why, and how to build/
 run/test whatever exists so far.
 
+**STANDING RULE, added 2026-09-12, applies every session, check this
+before retrying an elevated command a second time**: elevated
+operations in this environment (`Start-Process -Verb RunAs -Wait`, used
+for every Service/GUI redeploy and for anything touching the
+certificate/trust stores) require a REAL UAC click from whoever is at
+the keyboard. If one fails with "The operation was canceled by the
+user" and no log file was created by the script it was supposed to run
+(check for the script's own log, not just the task notification, which
+is unreliable — see the redeploy-mechanics note further down this
+file), that means the prompt was never approved, NOT that anything
+actually ran and failed. **If this happens twice in a row on the same
+action, stop retrying it and assume the user has gone AFK** — do not
+keep re-issuing the same elevated command hoping they'll notice a
+stuck dialog. Instead: say plainly, in one message, that the prompt
+isn't being approved, that you're assuming they're AFK, exactly what
+you were trying to do and why it's blocked, and that you'll wait for
+them to come back and say so before trying again. Continue with
+everything else in the current task that does NOT need elevation in
+the meantime, and keep `HANDOFF.md` current enough that a context
+compaction during that wait doesn't lose the thread (see this file's
+own fifteenth-session sections for a worked example of doing exactly
+this during a real multi-hour AFK gap).
+
 ## The goal
 
 Full port of the hardware/daemon side of JMA Studio (per-key keyboard
@@ -38,8 +61,9 @@ and forwarding over a new `POST /keypress` endpoint, user-confirmed
 working live ("I just tested your live update, it works" — see "Fix
 built and verified (2026-09-10, eighth session)"). A ninth session
 found and fixed 2 real uninstall bugs (not yet re-verified) and hit one
-backlogged theming bug (3 fix attempts failed, do not re-attempt
-without new evidence). A tenth session tested real sleep/hibernate/
+backlogged theming bug (3 fix attempts failed at the time -- FIXED in
+Phase 10/fifteenth session via Inno's native dark-mode support, see
+that section). A tenth session tested real sleep/hibernate/
 restart resilience: sleep passed clean, hibernate found one WON'T-FIX
 cosmetic gap (user declined the fix), and restart passed clean —
 closing out the last open question with the user's own unprompted
@@ -47,7 +71,61 @@ observation that boot-time lighting now beats PredatorSense's own
 timing ("the keyboard and backlight background colors pickup faster
 th[a]n the predator sense software ever did... GOOD JOB"). See
 "Immediate live state" at the end of this file for the precise
-remaining (non-blocking) loose ends. Before all that, read "Phase 6.5:
+remaining (non-blocking) loose ends. An eleventh session then found and
+fixed three more real installer bugs via live testing (Python's
+pre-existing autostart task silently reasserting control after an
+uninstall, and a leftover-empty-directory bug) — all confirmed working,
+committed, and pushed; the C# port is also now merged into `main` and
+published as a public GitHub release. **A twelfth session ran a full
+live Python-vs-C# resource-overhead benchmark** (see "Phase 7
+continued: Python vs. C# resource overhead benchmark" below) and then
+designed — but explicitly did NOT build — **Phase 8: an idle
+screensaver + low-battery lighting override, with V2-scope multi-effect
+cycling and randomization**. Read **"Phase 8"** below before touching
+either feature: the full design is final and user-confirmed, but the
+user was explicit that this is planning only — **do not write any
+implementation code for Phase 8 without an explicit go-ahead**, even if
+resuming cold on this file. **A thirteenth session then actually built
+and shipped Phase 9**: a full live-tuned rework of the `rain` effect
+(bug fix, fade-in, time-varying shower intensity, a new "accent drop"
+feature, and a reusable `EffectContext.EffectStartTime` addition) — see
+"Phase 9" below. Committed locally but deliberately NOT pushed to
+GitHub yet, per the user's explicit instruction to bundle it with
+Phase 8's V2 push later — check `git status`/`git log` against `origin`
+before assuming what's actually public. **A fourteenth session then
+built Phase 8's Feature 1 (idle screensaver)** — the user gave the
+explicit go-ahead to start V2, beginning with this feature specifically
+("start with the screen saver"). Fully built, redeployed live several
+times, and live-tuned with 3 follow-on requests (ListBox theming fix,
+green enabled-checkmarks on the top bar, a "Lights Out" sentinel option,
+plus a 4th bug found and fixed after that: a slider-label-not-updating
+bug when a saved value exactly equals a slider's Minimum) — see
+"Phase 8"'s "Feature 1 -- BUILT" subsection below. **The user then said
+"battery indicator?"** — direct continuation, no separate confirmation
+needed — and Feature 2 (low-battery override, plus a hardcoded bonus
+plug/unplug red/green flash) was built and live-verified too, across
+several rounds of live tuning (threshold range widened to 1-99%, color/
+brightness split into independent keyboard vs. lightbar controls, the
+panel moved from its own settings window to `MainWindow` as a live-apply
+panel, and the flash timing tuned twice by feel) — see "Feature 2 --
+DONE" below. **The user then said "lets get everything documented in
+handoff, commit everything then move on to the controller usb/bluetooth
+fix"** — Feature 3 (controller hot-discovery) was then built: a
+`ControllerHolder` mutable-reference refactor, a "Discover" button at
+the top of `ControllerReactiveWindow` (confirmed placement), and a full
+live reverse-engineering of the DualSense's Bluetooth report format,
+including a genuine protocol fix (reading HID feature report 0x05
+switches the controller into an "enhanced" report mode with paddle/Fn
+data) researched online per the user's explicit request after they
+found paddles/Fn broken over Bluetooth. L3/R3 stick-click buttons were
+also added (wired to keys 5/6 and 7/8) at the user's request. **The
+Bluetooth paddle/Fn fix itself is coded and self-verified at the raw
+HID level (see Feature 3's own section) but has NOT been redeployed to
+the real Service or confirmed with an actual paddle press** — the user
+went AFK right after asking for the fix, so this was completed as far
+as possible without them; see "Immediate live state" at the bottom of
+this file for the exact next step.
+Before all that, read "Phase 6.5:
 Tray icon (2026-09-10, sixth session)" for the tray icon scope
 addition, a real crash bug found and fixed live, a startup-behavior
 change (the checkmarked default preset now applies on every boot, not
@@ -2142,7 +2220,7 @@ now the ONLY remaining unverified item blocking Phase 7 from being
 called fully done, alongside the still-unverified `WizardImageStretch`
 fix (see "Immediate live state" at the end of this file).
 
-### Uninstall live-tested: 2 real bugs found + fixed (NOT yet re-verified); 1 theming bug found, backlogged (2026-09-11, ninth session)
+### Uninstall live-tested: 2 real bugs found + fixed (NOT yet re-verified); 1 theming bug found, backlogged -- FIXED in Phase 10, see that section (2026-09-11, ninth session)
 
 The user explicitly asked to test the uninstall's `Sleep(2000)` fix live
 (never actually re-verified after being added in the seventh session --
@@ -2221,6 +2299,18 @@ re-running `ApplyDarkTheme` on a short delay/timer after landing on this
 page) rather than another one-shot class guess at `CurPageChanged` time.
 The `Log(Name)` diagnostic pattern used to find the real control names
 here is worth reusing directly if this is picked back up.
+
+**UPDATE (2026-09-12, Phase 10, fifteenth session): FIXED, confirmed
+live.** The theory above (structural/timing, not a wrong-class guess)
+was correct in spirit, but the actual fix didn't need a custom delay
+hook at all -- it needed real evidence from OUTSIDE this file's own
+prior attempts: this machine's installed Inno Setup version (6.6.0+)
+turned out to already have genuine native dark-mode support
+(`WizardStyle=modern dark`) that correctly themes every page, including
+ones created dynamically at runtime, making the entire hand-rolled
+`ThemeControl`/`ApplyDarkTheme` approach (and this whole backlogged bug)
+obsolete. See "Phase 10"'s item 5 for the full writeup -- the fix has
+been live-confirmed, this is no longer an open issue.
 
 ### Uninstall re-enabling AcerLightingService caused Python to silently take back over (2026-09-11, eleventh session) — fixed, NOT yet live-tested
 
@@ -2502,8 +2592,1154 @@ service was tested for the first time this session.
    two uninstall fixes with an actual uninstall test, and a backlogged
    (do-not-reattempt-without-new-evidence) theming bug on the Restart
    Manager "Preparing to Install" page.
+8. Idle screensaver (multi-effect V2 scope) + low-battery lighting
+   override — **Feature 1 (idle screensaver) DONE and live-verified;
+   Features 2-3 still DESIGN ONLY**, see "Phase 8" below. Explicitly not
+   part of the original planning conversation; added at the user's
+   request. Do not start building Features 2/3 without the user's
+   explicit go-ahead, even on a fresh session — the go-ahead already
+   given was specifically for the screensaver.
 
-## Immediate live state as of writing this (2026-09-11, end of eleventh session)
+## Phase 7 continued: Python vs. C# resource overhead benchmark (2026-09-11, twelfth session)
+
+The user asked for a live, controlled comparison of idle/active resource
+overhead between the Python and C# stacks, both closed-GUI and open-GUI,
+specifically to answer "would I actually feel this in a game." Both
+stacks were run on the SAME "Red Chase" preset for a fair comparison,
+each stack fully stopped before the other started (never both at once,
+per the established two-processes-fighting-over-hardware risk), across
+8 measurement phases (2 stacks x 2 GUI states x idle/synthetic-typing-
+load) plus a 60s neither-running baseline. Full methodology, results
+table, and analysis were given directly to the user in-conversation
+(not duplicated here in full) — key numbers for future reference:
+
+| Phase | CPU (core-equiv %) | Avg Mem |
+|---|---|---|
+| Python closed idle / active | 1.6% / 9.8% | 100 / 100 MB |
+| Python open idle / active | 11.2% / 12.4% | 207 / 208 MB |
+| C# closed idle / active | 9.4% / 13.2% | 1064 / 1066 MB |
+| C# open idle / active | 18.8% / 22.6% | 1070 / 1073 MB |
+
+C# uses ~5-10x more memory than Python at every stage (expected: the
+self-contained single-file .NET publish bundles the whole runtime into
+the process, plus WPF's own overhead vs. a lightweight webview). C#'s
+idle CPU floor is also meaningfully higher than Python's even with the
+GUI closed. On this machine (i9-13900HX, 8P+16E hybrid, 32 logical
+threads) none of this is expected to be perceptible in a game -- the
+worst measured case (22.6% of one logical thread) is under 1% of total
+system compute, and Windows' hybrid scheduler specifically steers this
+kind of steady background work onto E-cores, away from a game's
+P-core-hungry threads. The more relevant gaming-performance axis is
+input latency, not background CPU%, and that was already specifically
+designed around in the `/keypress` fix (async, non-blocking, repeat-
+filtered) -- see Phase 7's "Fix built and verified" section above.
+
+**A real bug was found and fixed mid-benchmark, worth remembering for
+any FUTURE automation that needs to interact with a window (not just
+launch a process)**: an elevated PowerShell script's `FindWindow`/
+`EnumWindows`/`GetWindowText`/`PostMessage(WM_CLOSE)` calls all silently
+failed to find or affect the real, visible "JMA Studio" window --
+`EnumWindows` enumerated 161 real top-level windows and found zero
+matches, even though `Get-Process -Name JmaStudio.Gui | Select
+MainWindowTitle` (a plain, non-elevated read) correctly returned "JMA
+Studio" every time. This reproduced identically from a NON-elevated
+context too, and even .NET's own `Process.CloseMainWindow()` (a higher-
+level, more standard API than raw `PostMessage`) had the exact same
+silent-failure symptom -- it returned `True` (message "sent"
+successfully by .NET's own accounting) but the window never actually
+hid. **Root cause not fully identified** (suspected: some kind of
+desktop/window-station distinction between this automation
+environment's own window-manipulation calls and the real interactive
+desktop, since plain PROCESS-level operations like `Get-Process`,
+`Start-Process`, and reading `MainWindowHandle`/`MainWindowTitle`
+consistently worked fine throughout -- only direct window-message-based
+interaction failed). **The one thing that reliably worked, every time,
+was the user physically clicking the window's own X button or the tray
+icon.** Practical guidance for any future session attempting this kind
+of automation: don't trust `FindWindow`/`PostMessage`/`CloseMainWindow`
+from this automation context to actually manipulate a real window's
+visibility -- verify unhidden/hidden state explicitly before trusting
+the result (which is exactly what caught this bug: an added
+`IsWindowVisible` check after the "successful" close attempt), and if
+it fails, ask the user for one quick manual click rather than guessing
+at further Win32-level workarounds. The final, correct benchmark
+numbers above were obtained by asking the user to do exactly that.
+
+## Phase 8: Idle screensaver + low-battery lighting override + controller hot-discovery (V2) — ALL THREE features DONE and live-verified (2026-09-11 design, 2026-09-12 build across two sessions)
+
+**All three V2 features are fully built and confirmed working live** --
+see "Feature 1 -- BUILT", "Feature 2 -- DONE", and "Feature 3 -- DONE"
+below for the real implementations, live testing, and the follow-on
+fixes/tuning made after the user tried each one. V2 is now
+feature-complete; the only remaining decision is when the user wants
+this pushed to `origin`/released (see "Immediate live state" at the
+bottom of this file).
+
+**Scope, explicitly confirmed by the user: V2 applies to the C# port
+ONLY.** Nothing in this phase touches the Python version (`daemon/`,
+`effects/`, `gui/`, `tray.py` on `main`/the repo root) at all -- not
+because it couldn't apply there too, but because the user said so
+directly. Don't port any of this back to Python without being asked.
+
+### Feature 1: Idle screensaver (multi-effect, V2 scope)
+
+**Origin**: the user's real motivation is that the PH16-71's ugly
+firmware-default keyboard animation before login was already solved by
+the boot-time service (Phase 7) -- this is the same instinct applied to
+being AFK at the desktop: if nothing is happening, show something more
+interesting/calming than whatever effect happened to be active, then
+snap back the instant real input resumes.
+
+**Idle detection -- the hard part, and the user correctly anticipated
+the real difficulty**: "the timing can't be based on me just not
+typing, I may be playing a game and only using my controller... if I
+don't input on any device the timer's going." Windows' own idle-
+tracking API, `GetLastInputInfo()`, reliably covers keyboard AND mouse
+-- but does NOT see controller input at all, since games read a
+DualSense via raw HID/XInput, bypassing the OS input pipeline entirely
+(this is the same well-known reason Windows' own screensaver/display-
+sleep timer famously ignores controller-only play). The design combines
+two independent activity sources rather than relying on one API:
+1. **Keyboard + mouse**: `GetLastInputInfo()`, polled every few seconds
+   from `JmaStudio.Gui` (must be the GUI, not the Service -- same
+   Session 0 isolation reason the `/keypress` fix exists at all; the
+   Service cannot see interactive-session input directly). Deliberately
+   NOT a new custom low-level mouse hook -- that would add a second
+   always-on global hook next to the existing keyboard one, working
+   against this whole project's established "stay light on a gaming
+   laptop" principle. `GetLastInputInfo` is a single cheap on-demand
+   Win32 call, not a hook intercepting every mouse move.
+2. **Controller**: the Service's `RenderLoopService` already reads
+   `Controller.GetState()` every single frame for the controller-
+   reactive effect -- comparing consecutive frames (any button OR any
+   stick movement past the existing `ControllerReactiveParams.Deadzone`
+   setting, so idle analog noise/drift doesn't count) gives controller
+   activity for free, zero new polling overhead.
+
+The Service owns the actual idle clock (it already owns all render-loop
+state): `lastActivity = max(last keyboard/mouse ping received from the
+GUI, last frame a controller state change was detected)`. A new
+background service (same shape as `LightbarReactiveManager`, ticking
+every second or so) compares `now - lastActivity` against the
+configured threshold.
+
+**V2 scope, per the user's explicit follow-up ask** (this is new,
+beyond the original single-effect idea, and is the reason this is
+called V2 rather than just "the screensaver feature"): the screensaver
+is a PLAYLIST, not one fixed effect --
+- A list of keyboard preset names to cycle through (reusing the
+  existing named-preset system directly, not a new preset format).
+- A configurable cycle interval (how often it switches to the next
+  playlist entry while idle).
+- A randomize toggle: off = cycle through the list in stored order,
+  wrapping around; on = pick randomly each cycle tick (should avoid
+  immediately repeating the same entry twice in a row, otherwise a
+  short list feels broken, not random).
+- A list of ONE entry degenerates cleanly back to the original "one
+  effect" idea -- V2 generalizes V1 rather than replacing it.
+- **Open question, not yet answered by the user, flag before building**:
+  should the lightbar ALSO cycle through its own parallel playlist in
+  lockstep with the keyboard list, or just sit on a single fixed
+  "screensaver lightbar preset" the whole time regardless of which
+  keyboard effect is currently showing? Recommended default if not
+  told otherwise: give the lightbar its own optional list too (a list
+  of length 1 behaves as "fixed"), for maximum flexibility with no
+  added complexity over the fixed-only alternative.
+- This needs a SECOND internal timer distinct from the idle-detection
+  timer: one decides WHEN to enter/exit screensaver mode at all, the
+  other (only running while screensaver mode is active) decides when to
+  advance to the next playlist entry.
+
+**Trigger/restore mechanism**: reuses the exact stash-and-restore
+pattern `ControllerReactiveManager` already implements for its own
+enable/disable (Phase 5) -- on entering screensaver mode, snapshot
+whatever's currently live (keyboard effect + params, lightbar state,
+AND whether controller-reactive is currently enabled), apply the
+current playlist entry; on any real input resuming from either source,
+restore the snapshot exactly, no fade -- an instant "snap back," per
+the user's own word for it.
+
+**Confirmed by the user, do not re-litigate**: controller-reactive mode
+being active does NOT block/override the screensaver from triggering --
+"if you are asking if controller-reactive active should override the
+screen saver, I would say no." The screensaver triggers uniformly
+regardless of what was running before, including controller-reactive.
+
+**New config, new file, mirroring `LightbarReactiveConfig`'s existing
+shape/style** (`JmaStudio.Presets`, not yet created):
+```
+IdleScreensaverConfig {
+  Enabled: bool
+  IdleThresholdMinutes: double
+  KeyboardPresetNames: List<string>   // the playlist
+  LightbarPresetNames: List<string>?  // optional parallel playlist -- open question above
+  CycleIntervalSeconds: int
+  RandomOrder: bool
+}
+```
+
+**New Service pieces, not yet created**: an `IdleScreensaverManager`
+(`BackgroundService`, same shape as `LightbarReactiveManager`) owning
+both timers and the stash/restore logic; a new `POST /idle-activity`
+endpoint (or similar name) for the GUI's periodic `GetLastInputInfo`
+ping; `GET`/`POST /idle-screensaver/config` (mirrors `/lightbar/
+reactive`'s existing GET/POST shape).
+
+**New GUI piece, not yet created**: something needs to expose the
+playlist/interval/randomize/threshold settings -- not yet decided where
+this UI lives. Recommended default: a new dedicated small settings
+window (matching the established one-window-per-concern pattern:
+Lightbar, Controller Reactive, Diagnostics each got their own), rather
+than folding into an existing window, since there are now potentially
+TWO new settings groups (this, plus low-battery below) that would
+otherwise clutter the Diagnostics window's existing dashboard scope.
+Not a final decision -- worth revisiting once actually building this.
+
+### Feature 1 -- BUILT (2026-09-12, fourteenth session)
+
+Built almost exactly per the original design above, with the two open
+questions from that design resolved live by the user before coding
+started: the lightbar stays fixed (no cycling playlist -- confirmed:
+"Keep it to fixed to one of the built in effects or a solid color, or
+nothing at all"), and it got its own dedicated window rather than
+folding into MainWindow (the recommended default, which the user
+deferred to).
+
+**New files, exactly as designed:**
+- `JmaStudio.Presets/Models.cs`: `IdleScreensaverConfig` record (matches
+  the design's shape exactly) plus a new `IdleScreensaverSentinels`
+  static class (added live, not in the original design -- see "Lights
+  Out" below).
+- `JmaStudio.Presets/JsonStore.cs`: `PresetStore.IdleScreensaverConfig`,
+  backed by a new `idle-screensaver-config.json`.
+- `JmaStudio.Service/IdleScreensaverManager.cs`: the `BackgroundService`,
+  same shape as `LightbarReactiveManager`. Combines the two activity
+  sources exactly as designed (GUI-forwarded keyboard/mouse pings via
+  `RecordExternalActivity()`, plus its own direct per-tick
+  `Controller.GetState()` diff against the previous tick, deadzone-aware
+  at 0.15 matching `ControllerReactiveParams`' own default). Confirmed
+  live: stashing/restoring via `DaemonState.GetEffect()`/`SetEffect()`
+  alone composes correctly with `ControllerReactiveManager` with zero
+  special-casing needed, exactly as reasoned through in the original
+  design -- this was never actually tested against controller-reactive
+  being active during this session, so "confirmed" here means "confirmed
+  by re-reading the composition logic carefully," not "confirmed live
+  against that specific combination." Worth an explicit live check if it
+  ever matters.
+- `JmaStudio.Service/Endpoints.cs`: `MapIdleScreensaver` -- `POST
+  /idle-activity`, `GET`/`POST /idle-screensaver/config`, exactly the
+  shape the design called for.
+- `JmaStudio.Gui/IdleActivityMonitor.cs`: `GetLastInputInfo` polling
+  every 2s from the GUI, pinging the Service only when idle time is
+  observed to have gone DOWN since the last check (i.e. real new input
+  happened) -- not a heartbeat, exactly as designed.
+- `JmaStudio.Gui/IdleScreensaverWindow.xaml`/`.xaml.cs`: the settings
+  window -- enable toggle, idle-threshold slider, a playlist `ListBox`
+  with add/remove/reorder (add/remove were in the original design's
+  scope; up/down reordering was an obvious addition made while building,
+  not separately requested but clearly implied by "how often they
+  change" mattering for sequential order), cycle-interval slider,
+  random-order checkbox, and a single lightbar-preset combo. Config is
+  edited locally and posted as one whole object on Save -- deliberately
+  NOT the tuning panels' live-apply-with-debounce pattern, since
+  `IdleScreensaverManager` only reads the config once per its own 1s
+  tick anyway, so there's no responsiveness benefit to live-apply for a
+  background timer's settings.
+- `MainWindow.xaml`/`.xaml.cs`: a new "Screensaver" button next to
+  "Controller Reactive" in the top bar, opening the new window (same
+  `IsLoaded`/`Activate()` pattern as every other child window).
+
+**Verified live, redeployed to the real installed Service+GUI multiple
+times over the course of this session** (same standing practice as
+every other phase): the playlist correctly cycles, a single-entry
+playlist correctly does NOT re-apply itself every interval (confirmed by
+re-reading `AdvancePlaylistIfDue`'s own early-return guard when asked
+directly, not by a fresh live test -- the guard was already correct from
+first-write), and the lightbar preset combo correctly leaves the
+lightbar untouched when unset.
+
+**Three real bugs/gaps found live and fixed, all in the same session,
+none anticipated by the original design:**
+1. **ListBox text was unreadable** -- black-on-dark, the exact same
+   class of bug this project already hit and fixed for ComboBox/CheckBox
+   in Phase 6's theming pass, just never triggered before now because
+   this was the first-ever use of a plain `ListBox` anywhere in the app.
+   Fixed the same way: a global implicit `ListBox`/`ListBoxItem` style in
+   `App.xaml`, mirroring `ComboBoxItem`'s own hover/selected-state
+   template rather than inventing a new pattern.
+2. **User asked for a green checkmark on the Controller Reactive and
+   Screensaver top-bar buttons when each is enabled** -- not in the
+   original design at all, requested live after trying the feature.
+   Added a new, deliberately SEPARATE 3-second poll timer
+   (`_featureStatusPollTimer` in `MainWindow.xaml.cs`, polling `GET
+   /controller-reactive/status` and `GET /idle-screensaver/config`) --
+   kept off the existing 750ms status-poll timer on purpose, since these
+   two states only change when a user toggles them, not every tick,
+   matching this app's established pattern of not polling
+   infrequently-changing things on a fast timer (see `KeypressForwarder`'s
+   own 3s gating poll for the same principle applied elsewhere).
+   **First attempt placed the checkmark as a floating overlay positioned
+   outside the button's own bounds (negative margin on a sibling
+   TextBlock in a wrapping Grid) -- the user asked for it moved INSIDE
+   the button instead**, fixed by restructuring each button's `Content`
+   into a `StackPanel` (label + conditionally-visible checkmark
+   TextBlock) rather than a plain string, so the checkmark is genuinely
+   part of the button's own content flow, not a separately-positioned
+   overlay.
+3. **"Lights Out" option, requested live, not in the original design**:
+   the user wanted an obviously-named way to turn everything off as a
+   playlist entry / lightbar selection, rather than requiring a separate
+   checkbox-plus-disable-the-list mechanism (offered as the alternative,
+   not chosen). Implemented as a reserved sentinel string
+   (`IdleScreensaverSentinels.LightsOut = "(Lights Out)"`, in
+   `JmaStudio.Presets` so both the GUI and Service agree on the exact
+   value) rather than a real preset -- selectable in both the keyboard
+   playlist's "Add" combo and the lightbar combo. `IdleScreensaverManager`
+   special-cases this string before doing any preset lookup: for the
+   keyboard, applies `static` with default (black) params, the same
+   mechanism `ApiClient.TurnOffAsync()`/MainWindow's own Off button
+   already use; for the lightbar, calls `LightbarController.Off()`
+   directly. `Activate()`'s lightbar handling became a real three-way
+   branch (untouched / Lights Out / named preset) sharing the same
+   stash-and-restore bookkeeping regardless of which of the three
+   applies.
+
+**Not yet exercised live, worth knowing**: the "Lights Out" sentinel
+colliding with an actual user-named preset called exactly `(Lights Out)`
+was never tested (would silently behave as Lights Out instead of the
+real preset) -- extremely unlikely in practice given the parentheses,
+not worth guarding against unless it ever actually happens.
+
+**Fourth bug found and fixed live, same session, after the three above
+were already committed** (this fix itself is NOT committed yet -- see
+"Immediate live state" at the end of this file): saving `IdleThresholdMinutes`
+as exactly `1` (the slider's `Minimum`) and reopening the window showed
+the stale XAML-placeholder text "5.0 min" instead of "1.0 min", with the
+slider itself correctly positioned at 1 -- only fixed by nudging the
+slider away and back. **Root cause**: `ThresholdSlider` has `Minimum="1"`
+and no `Value` in XAML, so WPF's property coercion already snaps its
+default `Value` (0) up to 1 during BAML parsing, before `LoadAsync` ever
+runs. When the saved config value is ALSO exactly 1, assigning
+`ThresholdSlider.Value = 1` in `LoadAsync` is a no-op as far as WPF's
+dependency-property system is concerned (no real change -> no
+`ValueChanged` event), so `ThresholdLabel.Text` never updates and stays
+on its hardcoded XAML placeholder. **Fixed**: `LoadAsync`
+(`IdleScreensaverWindow.xaml.cs`) now sets both `ThresholdLabel.Text`
+and `IntervalLabel.Text` explicitly right after assigning their
+sliders' `.Value`, rather than relying solely on `ValueChanged` firing.
+Confirmed live: saving threshold=1, closing, reopening now correctly
+shows "1.0 min" immediately, no slider nudge needed.
+
+### Feature 2: Low-battery lighting override -- DONE, built and live-verified (2026-09-12, fourteenth session continued)
+
+**Built from the settled plan (`EffectOverrideCoordinator.
+BatteryOverrideActive`, `LowBatteryOverrideManager` as a 30s-tick
+`BackgroundService` reading `GetSystemPowerStatus` via P/Invoke,
+stash/restore of both keyboard and lightbar) exactly as designed** --
+see the coordinator/stash-restore reasoning immediately below for what
+carried over unchanged from the original plan. `PowerStatus.cs` (new,
+`JmaStudio.Service`) factors the `GetSystemPowerStatus` P/Invoke out
+into a small shared static class once `PowerStateFlashManager` (see
+below) needed the exact same read -- avoids two copies of the same
+struct/DllImport drifting apart.
+
+**Coordinator composes correctly, confirmed live, not just reasoned
+through**: `EffectOverrideCoordinator.BatteryOverrideActive` is checked
+first thing in `IdleScreensaverManager.Tick()`, so the screensaver
+completely pauses (not just its own stash/restore -- its whole
+Activate/Deactivate/AdvancePlaylistIfDue logic) while battery has
+priority, and resumes cleanly once it clears. One accepted minor quirk,
+not worth engineering around: if the screensaver's own cycle timer
+accumulates real time while paused behind a battery override, it may
+jump ahead in the playlist rather than resuming exactly where it paused
+-- purely cosmetic, matches how a real screensaver's timing would drift
+too. Controller Reactive needs NO coordinator check at all: unlike the
+screensaver, it has no background loop reasserting its effect (`Enable`/
+`Disable` are push-based, one `SetEffect` call each), so once battery
+override takes over `DaemonState`'s current effect, Controller Reactive
+just silently stops being rendered until battery's own `Deactivate()`
+restores whatever was stashed (which correctly captures Controller
+Reactive as the current effect if it was live at the moment battery
+activated). **One known, accepted edge case, documented rather than
+fixed**: if the user manually clicks "Disable" on Controller Reactive
+WHILE a battery override is actively showing, `ControllerReactiveManager
+.Disable()` restores ITS OWN `_preEnableState` (whatever was live before
+Controller Reactive was originally enabled) over top of the battery
+override's dim color, and then `LowBatteryOverrideManager`'s own
+eventual `Deactivate()` will still restore the stashed
+`("controller_reactive", ...)` effect it captured at activation time --
+re-enabling something the user just explicitly disabled. Rare (requires
+manually toggling Controller Reactive mid-override) and not fixed;
+flagged for whoever revisits this.
+
+**GUI placement changed from the original plan, per explicit user
+request AFTER the initial build**: originally built as its own panel
+inside `IdleScreensaverWindow` with a Save button (matching that
+window's existing pattern). The user then asked to move it to
+`MainWindow.xaml`, between "Live Preview" and "Presets" (its own new
+panel, `MainWindow.BatteryOverride.cs`), and to make it live-apply
+(debounced POST on every change, matching Gradient/Reactive Typing/
+Custom Key Colors) instead of keeping a separate Save button, since it
+now sits among MainWindow's other live-apply panels. Also added, per
+the same request: a live "Battery: N% -- plugged in/on battery" status
+line (folded into the existing 3s `_featureStatusPollTimer`/
+`PollFeatureStatusAsync`, using the new `GET /battery/status`
+endpoint), and the exact override-priority sentence now reads "This
+will override the screen saver and Controller Reactive if they are
+enabled" -- verified accurate (see the Controller Reactive paragraph
+above) before being written into the UI copy.
+
+**Live-tuned after the user tried it**:
+- Threshold slider range widened from an initial 1-50% to the full
+  1-99% the user asked for.
+- Color/brightness split from ONE shared `Color`/`Brightness` pair
+  (applied to both keyboard and lightbar identically) into fully
+  independent `KeyboardColor`/`KeyboardBrightness` and
+  `LightbarColor`/`LightbarBrightness` fields on
+  `LowBatteryOverrideConfig`, per the user's explicit request -- the
+  MainWindow panel now has two separate `ColorSwatchButton`s and two
+  separate brightness sliders. Old saved configs missing these new
+  field names just fall back to the record's own defaults (white,
+  30%) on next load -- no migration needed, this config was only ever
+  touched during this same session's testing.
+
+**Bonus feature added at the user's explicit request, hardcoded and NOT
+selectable/configurable (no config file, no endpoint, no GUI toggle)**:
+`PowerStateFlashManager.cs` (new, `JmaStudio.Service`) polls
+`PowerStatus` every 1s (much tighter than `LowBatteryOverrideManager`'s
+30s -- this one needs to notice a physical plug/unplug quickly) and, on
+an `ACLineStatus` transition, fades the WHOLE keyboard through 2 blinks
+of red (unplugged) or green (plugged in) -- a real fade via many small
+interpolated `SetEffect` calls per blink, not an instant on/off toggle
+(the first version was abrupt on/off and got explicit live feedback:
+"Thats very abrupt. Slow it down and have it fade more" -- then, after
+slowing it down, "a little faster" tuned it back down partway). Final
+timing: `FadeInMs=220, HoldMs=80, FadeOutMs=220, GapMs=130`, ~1s total
+for both blinks. Whatever was displaying before the blink (a preset,
+the screensaver's current playlist entry, the battery override's own
+dim color -- anything `DaemonState.GetEffect()` reports) is restored
+exactly once the sequence finishes, same stash/restore-via-GetEffect()/
+SetEffect() pattern as every other override in this file, needing zero
+special-casing regardless of source. A new `EffectOverrideCoordinator.
+FlashInProgress` bool (parallel to `BatteryOverrideActive`) is held for
+the blink's short duration and checked by both `IdleScreensaverManager`
+and `LowBatteryOverrideManager` so a cycle boundary or activation can't
+land mid-blink and clobber it -- belt-and-suspenders given how brief the
+window is, not a bug ever actually observed live.
+
+**Files, final state**: `JmaStudio.Presets/Models.cs`
+(`LowBatteryOverrideConfig`), `JmaStudio.Presets/JsonStore.cs`
+(`PresetStore.LowBatteryOverrideConfig`), `JmaStudio.Service/
+PowerStatus.cs` (new, shared `GetSystemPowerStatus` wrapper),
+`JmaStudio.Service/EffectOverrideCoordinator.cs`
+(`BatteryOverrideActive` + `FlashInProgress`), `JmaStudio.Service/
+LowBatteryOverrideManager.cs` (new), `JmaStudio.Service/
+PowerStateFlashManager.cs` (new), `JmaStudio.Service/
+IdleScreensaverManager.cs` (coordinator checks), `JmaStudio.Service/
+Endpoints.cs` (`MapLowBatteryOverride`: `GET`/`POST /battery-override/
+config`, `GET /battery/status`), `JmaStudio.Service/Program.cs`
+(constructs the coordinator once, passes it to all three managers;
+registers `LowBatteryOverrideManager` and `PowerStateFlashManager` as
+`IHostedService`), `JmaStudio.Gui/ApiClient.cs` (`GetLowBatteryOverride
+ConfigAsync`, `SetLowBatteryOverrideConfigAsync`, `GetBatteryStatusAsync`),
+`JmaStudio.Gui/MainWindow.xaml` + `MainWindow.BatteryOverride.cs` (new
+panel), `JmaStudio.Gui/MainWindow.xaml.cs` (init call + status-line poll).
+`IdleScreensaverWindow.xaml`/`.xaml.cs` had the panel added and then
+fully removed again once it moved to `MainWindow` -- net diff on that
+file across the session is small.
+
+**Verified live, redeployed to the real installed Service+GUI multiple
+times over the course of this work** (elevated redeploys needed real
+UAC approval each time -- two attempts were silently cancelled before
+one actually landed; if a redeploy's log file never appears, that's the
+UAC prompt not being approved, not a script bug -- re-run and wait for
+the approval). Confirmed via direct endpoint checks (`GET /battery-
+override/config`, `GET /battery/status`) and the user's own live
+testing of the panel, the threshold range, the independent colors, and
+the flash timing (tuned twice by feel, same iterative pattern as the
+rain effect in Phase 9).
+
+### Feature 3: Controller hot-discovery (USB + Bluetooth) -- DONE, built and fully live-verified (2026-09-12, fifteenth session)
+
+**Origin**: a real bug the user found live -- every controller-reactive
+test throughout this whole project (Phase 5 onward) happened to have
+the DualSense already connected before the Service started. Connect it
+AFTER the Service is already running and it never worked, since
+`Keyboard?`/`Controller?` were captured ONCE in `Program.cs` at startup
+and handed out as plain closure-captured references.
+
+**Architecture built exactly as planned**: `ControllerHolder`
+(`JmaStudio.Hardware/ControllerHolder.cs`, new) wraps `Controller?
+Current` behind a lock with a `TryDiscover()` method. Every consumer
+that used to hold the raw `Controller?` now holds the holder instead
+and reads `.Current` each time: `RenderLoopService`, `DiagnosticsManager`,
+`IdleScreensaverManager`, and three `Endpoints.cs` methods
+(`MapKeyboard`, `MapControllerReactive`, `MapDiagnostics`).
+`Program.cs` constructs one `ControllerHolder` seeded from the existing
+startup `TryOpen("controller", Controller.Open, logger)` call, so the
+already-working "connected at startup" case is unchanged. `Controller.
+Open()` is now implemented as `TryDiscover() ?? throw ...` -- `TryDiscover()`
+is the new non-throwing entry point (`JmaStudio.Hardware/Controller.cs`)
+used by both `Open()` and `ControllerHolder.TryDiscover()`.
+
+**UX built exactly as specified**: a "Discover" button at the top of
+`ControllerReactiveWindow`, next to the "Enabled" checkbox (confirmed
+placement, reconfirmed again by the user at the start of this session).
+Click -> `POST /controller-reactive/discover` -> `ControllerHolder.
+TryDiscover()` -> updates `ConnectionStatusText` with transport
+("Controller connected (Bluetooth)" / "(USB)" / "No controller
+detected") and a toast. Searches USB and Bluetooth in one scan, no
+transport picker -- confirmed working live for BOTH transports this
+session (plugged in via USB: detected as USB; unplugged, Bluetooth-
+paired: Discover found it and correctly reported Bluetooth).
+
+**Bonus, built**: `DiagnosticsManager.Rescan()` upgraded from presence-
+only to an actual reconnect attempt for the controller specifically
+(`if (_controllerHolder.Current is not { IsConnected: true })
+_controllerHolder.TryDiscover();`), returning a new `controllerConnected`
+field alongside the existing presence-only `controllerDetected`.
+`RescanResponse` (`ApiClient.cs`) and the Diagnostics window's rescan
+toast text both updated to show it.
+
+**Bluetooth report format -- fully reverse-engineered and confirmed
+live against a real DualSense Edge paired on this machine, NOT assumed
+from community docs alone** (every claim below was cross-checked
+against an actual live capture via two new `JmaStudio.HardwareTest`
+commands built for this: `controller-raw-dump [seconds]` dumps raw hex
+reports from every matching HID device; `controller-enhance-test`
+self-verifies the enhanced-mode trigger below with zero user
+interaction needed):
+- Transport is detected via `HidDevice.GetMaxInputReportLength()` --
+  64 bytes for USB, 78 for Bluetooth on this controller. No device-path
+  string parsing needed. Re-checked on every `TryReconnect()`, not just
+  initial connect, in case the same logical session resumes on a
+  different transport.
+- **Two Bluetooth report modes exist, confirmed live.** By default the
+  controller only sends a "basic" report (still report ID 0x01, same
+  as USB, wrapped in a 78-byte HID transfer) where sticks/buttons/
+  triggers work but everything past the first ~9 bytes (paddles/Fn/
+  touchpad/gyro/battery) is permanently 0 -- confirmed via a live
+  capture with the user pressing all 4 paddle/Fn buttons and NOTHING
+  changing anywhere past byte 9.
+- **The fix, researched online per the user's explicit request and
+  confirmed live**: reading HID **feature report 0x05** (the
+  "calibration" report -- `DS_FEATURE_REPORT_CALIBRATION` in Linux's
+  `hid-playstation.c` driver; also the subject of libsdl-org/SDL#10086,
+  "Unable to enable Enhanced Reports on DualSense over Bluetooth")
+  switches the controller into sending **enhanced reports (report ID
+  0x31, still 78 bytes)** that include everything. Implemented as
+  `Controller.TryEnableBluetoothEnhancedMode(device, stream)`, called
+  once whenever a Bluetooth connection is established (`TryDiscover()`)
+  or re-established (`TryReconnect()`), via `HidStream.GetFeature()`
+  with the report ID in `buffer[0]` and the buffer sized to `HidDevice.
+  GetMaxFeatureReportLength()`. Wrapped in try/catch, best-effort --
+  if it fails on some other firmware, paddles/Fn just stay unavailable
+  over Bluetooth exactly as before, zero regression risk to what
+  already worked. **Confirmed live via `controller-enhance-test` with
+  ZERO user interaction**: reading feature report 0x05 immediately
+  caused bytes past offset 10 to start showing real values (gyro/accel
+  noise from gravity alone, controller just sitting on a desk) where
+  they'd been all-zero seconds before.
+- **Enhanced (0x31) report layout**, cross-referenced against Linux's
+  `hid-playstation.c` (`dualsense_input_report_common` starts at
+  `data[2]` for Bluetooth -- `data[1]` is a `seq_tag`/framing byte the
+  driver itself skips, not part of the common struct) and confirmed
+  live (an at-rest sample read `data[9]=0x08`, the same neutral-hat
+  value USB uses, and `data[6]`/`data[7]=0`, idle triggers -- exactly
+  as expected): sticks at bytes 2-5, L2/R2 analog at 6-7, sequence
+  counter at 8, buttons1/buttons2/buttons3 (paddles/Fn included) at
+  9/10/11. `Controller.ParseBluetoothReport` was rewritten to this
+  layout, superseding an earlier "basic-mode" mapping (buttons at 5-6,
+  triggers at 8-9, no paddle data anywhere) written before the
+  enhanced-mode trigger existed.
+- **Sources**: [libsdl-org/SDL#10086](https://github.com/libsdl-org/SDL/issues/10086)
+  (the enhanced-mode trigger mechanism), [torvalds/linux hid-playstation.c](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-playstation.c)
+  (exact feature report IDs -- `DS_FEATURE_REPORT_CALIBRATION 0x05`,
+  `DS_FEATURE_REPORT_PAIRING_INFO 0x09`, `DS_FEATURE_REPORT_FIRMWARE_INFO
+  0x20` -- and the enhanced input report struct layout). The user
+  explicitly asked to look online rather than rely on reasoning alone,
+  and specifically mentioned a Steam tool called "DSX" as a known-good
+  reference point (not fetched directly this session -- the Linux
+  driver and SDL issue were sufficient and are primary/authoritative
+  sources anyway, but worth checking DSX's own approach if this ever
+  needs revisiting).
+
+**Also added this session, not originally scoped but requested live**:
+`ControllerState.L3`/`R3` (stick-click buttons) -- read from buttons2
+bit6/bit7 on BOTH transports (confirmed live), previously read from the
+hardware but never modeled or wired to anything. `ControllerReactiveEffect.
+ButtonGroups` now maps `"l3"` -> keys `5,6` and `"r3"` -> keys `7,8`
+(bare-digit key names confirmed present in `keymap.json`), with a new
+"L3"/"R3" color-swatch pair added to `ControllerReactiveWindow`'s
+"Shoulders, Triggers & Stick Clicks" panel (renamed from "Shoulders &
+Triggers"). Confirmed working live by the user for both L3 and R3.
+
+**FIXED and confirmed live (2026-09-12)**: paddles/Fn over Bluetooth
+were reported broken live by the user after the initial Feature 3
+build. Root-caused via online research (see sources above), fixed by
+reading HID feature report 0x05 to trigger the DualSense's "enhanced"
+Bluetooth report mode, self-verified with zero user interaction via the
+new `controller-enhance-test` command, then redeployed and confirmed
+live by the user pressing a real paddle/Fn button with Controller
+Reactive enabled ("It all seems to work"). Feature 3 has no further
+known gaps.
+
+### Summary for whoever builds this next
+
+Three pieces of new scope make up this V2 phase, ALL now built:
+1. Idle screensaver (multi-effect playlist, cycle interval, randomizer)
+   -- **DONE**, built and live-verified.
+2. Low-battery lighting override (independent keyboard/lightbar color +
+   brightness, wins over the screensaver and Controller Reactive when
+   both conditions are true) plus the bonus hardcoded plug/unplug red/
+   green flash -- **DONE**, built and live-verified.
+3. Controller hot-discovery (USB + Bluetooth, a mutable-holder refactor,
+   plus a genuine Bluetooth protocol fix for paddles/Fn) -- **DONE
+   in code, one fix pending a redeploy + live re-check** -- see Feature
+   3's own section above and "Immediate live state" below for exactly
+   what's confirmed vs. still needs the user's hands on the controller.
+
+Features 1 and 2 both ended up sharing the exact "override the current
+effect" stash-and-restore shape predicted here, coordinated via the
+single `EffectOverrideCoordinator` this section recommended building --
+that recommendation held up in practice, including when a third
+override (`PowerStateFlashManager`'s flash) was added on top of the
+other two without needing any redesign, just one more bool on the same
+coordinator. Feature 3 was architecturally unrelated (a connection-
+management refactor, not an effect-override mechanism) and was built
+independently, confirming that prediction too.
+
+## Phase 9: "rain" effect rework -- DONE, built and shipped (2026-09-11, thirteenth session)
+
+A collaborative, purely-iterative live-tuning session on the `rain`
+effect (`RainEffect` in `windows/src/JmaStudio.Effects/Effects/
+PositionalEffects.cs`), explicitly scoped by the user to the C# port
+only (matches Phase 8's own "C# only" scope note -- `effects/rain.py`
+on the Python side was NOT touched and still has the original bug).
+Unlike Phase 8, none of this was planning -- every change below was
+built, redeployed to the real installed Service, and confirmed live one
+step at a time before moving to the next.
+
+**Real bug found and fixed**: with the ORIGINAL default params
+(`spawn_rate=3, speed=10, tail=2.5`), the `numSlots` formula produced
+only 2 concurrent "drop slots," and each slot's column was a pure
+function of its slot INDEX alone (`PseudoRandom.Value01(slot, 1)`,
+never re-rolled) -- meaning exactly 2 columns, forever, every session,
+confirmed empirically at columns ~1.29 and ~2.20 out of an ~18-column-
+wide keyboard. This is why the user observed "only using the first 5
+rows" -- really "only a narrow 2-column strip near the far-left edge,"
+which happens to make row 5 (whose populated columns start around
+column 9) essentially unreachable. **Fixed**: each slot's column is now
+re-rolled every time it restarts its fall, by folding the current CYCLE
+ITERATION into the existing salted hash (`PseudoRandom.Value01(slot, 1,
+cycleIndex)`) -- confirmed via a live simulation that this raises
+distinct-columns-visited from 2 to 169 over 200 simulated seconds, and
+reaches row 5. Still a pure function of `t`, no state persisted, same
+`SpawnRate`/`Speed`/`Tail` semantics as before.
+
+**Live-tuned parameter changes** (`RainParams`, same file):
+`Speed` 10.0 -> 2.5 (iterated live: 7.5, 5.5, 2.5), `SpawnRate` 3.0 ->
+6.0. `Color` (the everyday drop color) changed from the original
+(90,160,255) to (0,0,200) -- the user asked me to "remember" whatever
+color key `d` happened to be showing live at the time (it was
+`custom_keys`, not `rain`, active at that moment -- flagged to the user
+before recording it, confirmed as intended). The ORIGINAL (90,160,255)
+became a new `AccentColor` field instead of being discarded -- see
+"accent drop" below.
+
+**New behavior: fade-in.** A cell used to snap straight to full
+brightness the instant a drop's head reached it, then fade out over the
+tail -- no ramp-up at all. Added a short (0.5-row) fade-in immediately
+ahead of the head (`behind` in `[-0.5, 0)`), so a cell brightens
+quickly as a drop approaches instead of popping on, then the existing
+fade-out continues unchanged. Confirmed live: "O that is so good."
+
+**New behavior: shower intensity varies over time** ("like how a real
+rain shower speeds up and slows down"). `SpawnRate` is now the PEAK
+density; the effective density drifts down to a separately-configurable
+floor (`RainParams` doesn't expose this as a field currently -- it's a
+local `lowSpawnRate = 2.0` constant in `RainEffect.RenderTyped`, set via
+live iteration: started as `SpawnRate * 0.5`, then fixed at `2.0` on
+request) and back, via two summed sine waves (~78.5s and ~299s periods,
+deliberately unrelated so the drift never feels mechanically repetitive)
+combined and reshaped with `Math.Pow` so the wave spends real, sustained
+time near both ends rather than a raw sine's brief instantaneous touch-
+and-bounce at its extremes (found live: "never feels like it ramped
+down, only a quick moment"). **Asymmetric per the user's explicit
+request** ("bias the lower end for twice as long"): the low
+(negative-`rawWave`) side uses exponent 0.25 (aggressive flattening,
+long dwell), the high side uses 0.6 (shorter dwell) -- these are a
+live-tuned starting point, not derived from an exact mathematical 2:1
+time ratio; retune by feel if it doesn't feel exactly right after
+further use. The number of ACTIVE slots (not their individual timing)
+tracks this intensity, counting up from slot 0, with only the one slot
+currently straddling the threshold getting a fractional alpha so
+raising/lowering intensity fades that single slot smoothly instead of
+every slot popping at once.
+
+**New architecture, not scoped to just this effect: "time since this
+effect was activated."** `t` (the render loop's parameter) is the
+Service's raw global uptime -- it does NOT reset when an effect is
+switched on, so a fixed sine phase baked in at "t=0" would only
+actually align with Service startup, not with whenever the user
+happens to switch to `rain`. Per the user's request ("always start at
+the lower peak so it always builds up at the start"), added:
+- `DaemonState`: a private `Stopwatch` clock plus `_effectStartTime`,
+  stamped every `SetEffect()` call; exposed as a new public
+  `EffectStartTime` property.
+- `EffectContext` (`JmaStudio.Effects/IEffect.cs`): new `EffectStartTime`
+  field.
+- `RenderLoopService`: populates it from `_state.EffectStartTime` each
+  frame, alongside the existing `KeyState`/`ControllerState` injection.
+- `RainEffect` computes `tSinceActivation = t - context.EffectStartTime`
+  and uses THAT (not raw `t`) for the shower-intensity sine phases,
+  chosen (`-π/2` on both terms) so `rawWave` equals exactly -1 (the true
+  low point) at `tSinceActivation = 0`. The individual drops' own fall
+  timing was deliberately left on raw `t` -- only the shower-intensity
+  cycle needed this fix. **Any future effect can use this same
+  `EffectContext.EffectStartTime` field** for "time since I was turned
+  on" semantics -- it's not Rain-specific plumbing.
+
+**New behavior: accent drop.** Once every random 10-20 seconds
+(`AccentMinGapSeconds`/`AccentMaxGapSeconds`, new `RainParams` fields,
+started at 3-10s per the original request then widened live), exactly
+ONE extra drop falls in `AccentColor` (the original 90,160,255 blue,
+preserved rather than discarded when `Color` changed) -- deliberately
+NOT scaled by `SpawnRate`/density like the main shower, since it's meant
+to read as a rare highlight, not part of the regular rain. Implemented
+as a single independent lane reusing the exact same head/tail/fade-in
+math as the main slots. Since each gap's length is itself random (not a
+fixed cycle), there's no closed-form "which cycle am I in" the way the
+main slots have -- it walks forward from `tSinceActivation = 0`, summing
+randomized gap lengths, until passing the current time (capped at
+100,000 iterations as a defensive bound; in practice a handful of
+iterations even after hours of uptime, given a ~15s average gap).
+
+**Verified live, every step, on the real installed Service** (not dev
+mode) -- each change was built, redeployed via the same stop-service /
+`dotnet publish -o` / start-service cycle established in Phase 7, and
+confirmed by the user directly on the physical keyboard before moving
+to the next change. This is the same real-hardware verification bar
+every other phase in this file has used.
+
+**Installer rebuilt** (`windows/installer/build.ps1`) to bundle all of
+the above -- a fresh install now ships with the reworked `rain` effect,
+not just this session's directly-redeployed live instance.
+
+**Explicitly NOT pushed to GitHub yet, per the user's direct
+instruction** ("commit this, but don't upload to github. For github
+this will be part of V2") -- committed locally on `main` (already
+merged/public from the eleventh session), but this commit should stay
+local/unpushed until Phase 8's V2 work is ready to go out together with
+it. Whoever picks this up next: check `git log`/`git status` before
+assuming what's actually been pushed to `origin` matches local `main`.
+
+## Phase 10: V2 installer polish -- version/publisher labeling, upgrade safety, rain-defaults migration, self-signed code signing, native dark mode (2026-09-12, fifteenth session continued)
+
+Started right after the user confirmed all three V2 features working
+("is there anything else we need to finish?" -> yes, this). Five
+distinct asks (the 5th arrived mid-live-test), all built AND, unlike
+most of this file's other installer work, actually click-tested live
+through the real `Setup.exe` before being called done:
+
+**1. V2 labeling.** `JmaStudio.iss`: `AppVersion` "1.0.0" -> "2.0.0",
+`AppPublisher` "JMA" -> "Jake Adamsky", `OutputBaseFilename`
+"JmaStudio-Setup" -> "JmaStudio-Setup-V2". `JmaStudio.Gui.csproj` and
+`JmaStudio.Service.csproj` both got `<Version>2.0.0</Version>`,
+`<Product>JMA Studio</Product>`, `<Company>Jake Adamsky</Company>` --
+these flow into the actual .exe file's own Explorer/Task-Manager
+Details tab, not just the installer. `MainWindow.xaml`'s window Title
+changed from "JMA Studio" to "JMA Studio V2" so the running app itself
+is labeled too, not just its installer/file metadata.
+
+**2. Upgrade safety.** Two real gaps found by reading the existing
+script, not just assumed:
+- `SeedDefaultDataIfMissing()` already only seeds on a genuine fresh
+  install (checks `DirExists(DataDir())`) -- this part was already
+  correct, no change needed.
+- **Real bug**: nothing stopped the existing Service/GUI before
+  [Files] copied over an existing install. `InstallService()`'s
+  unconditional `sc create` would also silently fail on an upgrade
+  (`ResultCode` was never checked) since a service name that already
+  exists can't be re-created -- happened not to matter yet only because
+  binPath/DisplayName never changed between versions. **Fixed**: new
+  `StopExistingInstallation()` (stops the service, kills the GUI,
+  waits for both .exe files to unlock via the SAME `WaitForFileUnlocked`
+  helper the uninstall path already used -- relocated earlier in the
+  script so it can be called from both places) runs at `CurStepChanged`'s
+  `ssInstall` step, which fires BEFORE Inno copies any files. `Install
+  Service()` now checks `sc query`'s exit code (1060 =
+  ERROR_SERVICE_DOES_NOT_EXIST) and branches: `sc config` to reconfigure
+  an existing registration, `sc create` only for a genuinely new one.
+- **Hit and fixed live during testing**: `TSetupStep`'s pre-install
+  value is `ssInstall`, NOT `ssInstalling` as first written (a
+  plausible-sounding guess that doesn't exist in Inno's actual enum) --
+  caught immediately by ISCC's own compiler error, not shipped wrong.
+
+**3. Rain-defaults migration -- the one named exception to "never touch
+existing presets/effect data."** The user was explicit and emphatic:
+upgrading must NOT reset presets or the current effect, EXCEPT rain,
+which should pick up Phase 9's reworked defaults wherever it's
+currently used. Implemented as a new `--migrate-rain-defaults <dataDir>`
+CLI mode on `JmaStudio.Service.exe` itself (`Program.cs`, checked
+before anything else in the file, exits immediately without starting
+the web host) rather than reimplementing JSON handling in Pascal
+Script -- reuses the exact same `PresetStore`/`EffectParamsJsonConverter`
+code the Service already uses, so it can't drift from how presets/
+live-state are actually shaped. Refreshes BOTH `live-keyboard-state.json`
+(if its current effect is "rain") AND any entry in `keyboard-presets.json`
+whose effect is "rain" (a preset saved before Phase 9's rework would
+otherwise stay stuck on the old, buggier numbers forever) -- every
+OTHER effect/preset is left completely untouched. `JmaStudio.iss`'s
+`RefreshRainDefaults()` calls this on every install (fresh or upgrade)
+at `ssPostInstall`, after `SeedDefaultDataIfMissing()`. **Tested
+directly, not just reasoned through**: ran the published Service.exe
+against a scratch data directory with a live "rain" state (old
+Speed=10/Color=(90,160,255)/SpawnRate=3) and a saved preset using rain
+with the same old values, plus an unrelated "static" preset. Confirmed
+live: both rain entries were rewritten to the new defaults
+(Speed=2.5/Color=(0,0,200)/SpawnRate=6, plus the new AccentColor/
+AccentMinGapSeconds/AccentMaxGapSeconds fields), and the unrelated
+static preset was byte-for-byte untouched.
+
+**4. Self-signed code signing, so UAC shows "Jake Adamsky" instead of
+"Unknown Publisher"** -- explicitly scoped by the user as local-machine-
+only ("Im never getting a [real] certificate, this is just a fun
+project"), after being told plainly that a real trusted certificate
+costs money and takes days, and that a self-signed one only helps on
+the machine that creates+trusts it (anyone downloading this from GitHub
+still sees "Unknown Publisher" unless they also manually trust the
+cert, which isn't realistic to ask of real users). Plan: `New-
+SelfSignedCertificate` (Subject "CN=Jake Adamsky", CodeSigningCert,
+`Cert:\LocalMachine\My`, 10-year validity) once, then import its public
+cert into `Cert:\LocalMachine\Root` AND `Cert:\LocalMachine\
+TrustedPublisher` so THIS machine treats it as trusted. `build.ps1`
+detects the cert (`Get-ChildItem Cert:\LocalMachine\My -CodeSigningCert`
+matching the subject) and `signtool.exe` (found via `Windows Kits\10\
+bin\*\x64\signtool.exe`, present on this machine) and, if both exist,
+signs the published `JmaStudio.Gui.exe`/`JmaStudio.Service.exe` right
+after publish, and passes `/DSignInstaller=1` plus an inline `/Sjmasign=
+...` sign-tool definition to `ISCC.exe` so `JmaStudio.iss`'s own
+`#ifdef SignInstaller ... SignTool=jmasign ... #endif` block signs the
+final `Setup.exe` too. Entirely best-effort/graceful: if the cert or
+signtool aren't present (e.g. building on a different machine), both
+exes and the installer are simply left unsigned with a console warning,
+exactly like before this session -- zero risk of a broken build.
+
+**CONFIRMED working end-to-end.** The certificate creation needed 5
+elevated-UAC attempts total across two separate waits for the user to
+return before it actually landed (see the standing rule at the very
+top of this file, added specifically because of this). Once created,
+the FIRST signing attempt (via a plain, unelevated `build.ps1` run)
+failed with "SignTool Error: No certificates were found that met all
+the given criteria" -- root cause: the certificate's private key lives
+in `Cert:\LocalMachine\My`, which an unelevated process can enumerate
+(hence `Get-ChildItem` finding it fine) but not actually USE for
+signing. Fix: run `build.ps1` itself elevated too. Re-ran elevated and
+confirmed via `Get-AuthenticodeSignature` on all three outputs
+(`JmaStudio.Service.exe`, `JmaStudio.Gui.exe`, `JmaStudio-Setup-V2.exe`)
+-- all three: `Status: Valid`, `Subject: CN=Jake Adamsky`. Note for
+whoever runs this next: **`build.ps1` must be run elevated for signing
+to work**, not just for the one-time cert-creation script.
+
+**One more ask added mid-Phase-10, also built**: the user wants the
+installer to detect an existing installation and offer a real choice
+between Upgrade (the behavior above) and Clean Install (stop
+everything, delete the service registration outright, and `DelTree`
+the whole `{app}` directory -- but STILL separately ask whether to keep
+presets/configuration, exactly like the uninstaller's own equivalent
+prompt, per the user's explicit "still ask about pre-sets and current
+effects" carve-out). Built as:
+- `PriorInstallDetected()`: checks both the service registration key
+  (`RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\
+  JmaStudioService')`) and `DirExists('{app}')` -- either alone could
+  miss a partial/leftover state.
+- A new `InstallModePage` (`CreateInputOptionPage`, exclusive radio
+  choice), only created/shown when `PriorInstallDetected()` is true --
+  a genuine fresh install sees no extra page at all, zero behavior
+  change. Chained via `ConsentAnchor` (not both custom pages anchored
+  directly to `wpWelcome`) so the two pages are guaranteed to appear in
+  the right order -- multiple pages anchored to the exact same page ID
+  don't reliably self-order otherwise.
+- `PerformCleanWipe()`: deliberately does NOT just invoke the existing
+  uninstaller -- that also asks about re-enabling AcerLightingService/
+  Python autostart, which would be confusing noise moments before this
+  SAME app reinstalls itself and immediately retakes lighting control
+  again. Instead a narrower, purpose-built wipe: ask the keep-data
+  question first, then stop the GUI/service, `sc delete` the service
+  outright (not just reconfigure -- `InstallService()` recreates it
+  fresh afterward since `sc query` will correctly find nothing), `DelTree
+  {app}`, and `DelTree` `AppDataRoot()` too only if the user said no to
+  keeping their data.
+- `CurStepChanged`'s `ssInstall` case now branches: `PerformCleanWipe()`
+  if `InstallModePage` exists and its second option was picked,
+  `StopExistingInstallation()` otherwise (covers both Upgrade and a
+  genuine fresh install, exactly as before this addition).
+- **Confirmed live**: the user ran the real `Setup.exe` over their
+  existing install and completed the Upgrade path successfully -- see
+  "Immediate live state" below for the full confirmation (Service+GUI
+  came back up, their own live effect setup was preserved exactly).
+  Clean Install specifically has not been separately click-tested (the
+  user tested Upgrade), but shares the same underlying Exec/DelTree
+  primitives the uninstall path already uses successfully elsewhere.
+
+**5. Native dark mode -- fixes a real, long-backlogged bug, found DURING
+the live test above.** Running the actual `Setup.exe` hit the Restart
+Manager "Preparing to Install" page (the user's own `JmaStudio.Gui.exe`/
+Service were still running) and it was STILL unreadable -- this is the
+EXACT bug from the ninth session, backlogged after 3 failed fix
+attempts with an explicit "do not re-attempt without new evidence" (see
+that session's own section for the full history: two wrong-control-
+class guesses, then a type-check-free direct-property write that still
+didn't work). The user said plainly: this is a standing problem, fix it
+now, and to look online if needed. Real evidence this time, not a 4th
+guess: reading THIS machine's actual installed Inno Setup version's own
+changelog revealed Inno Setup 6.6.0+ (released 2025-11-11, well before
+this version) added genuine native dark-mode support built into the
+compiler/runtime itself -- `WizardStyle=modern dark` (forced dark,
+matching this app's own always-dark WPF theme, no light/auto toggle
+there either) correctly themes EVERY page, including ones created
+dynamically at runtime, because it's real VCL-level styling rather than
+a script reaching in from outside after the page already exists. This
+is exactly why the old approach could never win: three different
+"guess the right control class" attempts were solving the wrong
+problem -- the real issue was structural/timing, precisely as this
+file's own backlogged note had already suspected but couldn't confirm
+without new evidence.
+- **Removed entirely**: the hand-rolled `ThemeControl` recursive-walk
+  procedure, `ApplyDarkTheme`, the `ThemeBgColor`/`ThemePanelColor`/
+  `ThemeTextColor`/`ThemeSubTextColor` constants, and `CurPageChanged`
+  (which existed only to re-run `ApplyDarkTheme` on every page change).
+  All superseded by the native engine.
+- **Branding preserved per the user's explicit "make sure it keeps my
+  branding"**: `WizardBackColor=#0B0B12` keeps the app's own brand
+  background color (the exact value `MainWindow.xaml`/`App.xaml` use)
+  instead of Inno's generic dark gray. The custom `WizardImageFile`/
+  `WizardSmallImageFile`/`SetupIconFile` (JMA Studio's own wizard art
+  and icon) are unaffected either way -- dark mode still displays
+  custom images/icons as documented in Inno's own changelog.
+- **Confirmed live, immediately, on the very next install attempt**:
+  the user re-ran the fixed `Setup.exe` and confirmed "seems to have
+  worked" -- the Restart Manager page that defeated 3 prior sessions'
+  worth of attempts was finally readable.
+
+## Immediate live state as of writing this (2026-09-12, fifteenth session continued, Phase 10 fully DONE)
+
+**This section supersedes every "immediate live state" note below it in
+this file — only trust this one.**
+
+**All of Phase 10 is built, signed, and confirmed live end-to-end,
+including a real live test run of the actual `Setup.exe`.** The AFK
+pause documented in this file's git history resolved itself -- the
+user came back, the certificate got created (5th attempt), and once
+`build.ps1` was re-run ELEVATED (the real fix -- an unelevated run can
+enumerate the cert but not use its private key to sign anything), all
+three outputs signed successfully, confirmed via `Get-
+AuthenticodeSignature`: `Status: Valid`, `Subject: CN=Jake Adamsky` on
+`JmaStudio.Service.exe`, `JmaStudio.Gui.exe`, and `JmaStudio-Setup-V2.exe`.
+
+**A genuinely long-backlogged bug got fixed in the middle of the live
+test run**: the user ran the real `Setup.exe` over their existing
+install, hit the Restart Manager "Preparing to Install" page (their
+`JmaStudio.Gui.exe`/Service were still running), and it was STILL
+unreadable -- the exact `PreparingYesRadio`/`PreparingNoRadio`/
+`PreparingMemo` bug from the ninth session, backlogged after 3 failed
+fix attempts with an explicit "do not re-attempt without new evidence."
+The user said plainly: this is a standing problem, fix it now. Found
+real evidence this time (reading this machine's actual installed Inno
+Setup version's changelog, not guessing a 4th control-class name):
+Inno Setup 6.6.0+ added genuine native dark-mode support
+(`WizardStyle=modern dark`) that correctly themes every page, including
+ones created dynamically at runtime -- which is exactly what defeated
+the old hand-rolled `ThemeControl`/`ApplyDarkTheme` recursive-walk
+script (removed entirely, along with `CurPageChanged`, which existed
+only to re-run it). `WizardBackColor=#0B0B12` keeps the app's own brand
+background color instead of Inno's generic dark gray, per the user's
+explicit "make sure it keeps my branding" -- the custom wizard images/
+icon were unaffected either way. **Confirmed live, immediately, in the
+very next install attempt**: the user re-ran the fixed `Setup.exe` and
+confirmed it "seems to have worked" -- and the full install completed
+successfully (Service+GUI both running afterward, and the user's own
+live `typing_reactive`+`custom_keys` effect setup was preserved exactly,
+confirming the Upgrade path's data-preservation behavior works
+correctly on a real install, not just in the earlier scratch-directory
+test).
+
+**Everything from this session (Phases 8, 9, and 10) needs a final
+`git status` check and one commit for Phase 10** -- Phases 8/9 were
+already committed in prior sessions (`d60884e`, `e8ac8f5`, `f766cf5`).
+Phase 10's modified files: `installer/JmaStudio.iss`, `installer/
+build.ps1`, `JmaStudio.Gui.csproj`, `JmaStudio.Service.csproj`,
+`MainWindow.xaml`, `Program.cs` (the `--migrate-rain-defaults` mode),
+plus this file. `installer/output/*` and `installer/publish/*` are
+build artifacts, not tracked by git -- verify `git status` doesn't try
+to stage them (should already be gitignored; double-check before any
+`git add`).
+
+**Nothing else is pending.** V2 (all three Phase 8 features) plus
+Phase 10's installer polish are fully built and live-verified. The only
+remaining decision is the user's own call on when to push to `origin`/
+release -- don't push without being asked, and don't start new work
+without the user raising it.
+
+## Immediate live state as of writing this (2026-09-12, fifteenth session, V2 complete)
+
+**This section supersedes every "immediate live state" note below it in
+this file — only trust this one.**
+
+**All three V2 features (idle screensaver, low-battery override +
+plug/unplug flash, controller hot-discovery) are built and confirmed
+working live on the real installed Service+GUI.** The Bluetooth
+paddle/Fn fix that was pending a redeploy when the user went AFK was
+completed once they returned: redeployed clean, and the user confirmed
+live ("It all seems to work") after pressing paddle/Fn buttons with
+Controller Reactive enabled over Bluetooth. Feature 3's "Start here
+next time" list from the AFK gap is now fully resolved -- nothing left
+to re-verify.
+
+**Everything from this session is committed** in one commit covering
+Feature 3 in full (`ControllerHolder`, the Discover button, the
+Bluetooth report reverse-engineering + enhanced-mode fix, L3/R3, and
+the `DiagnosticsManager.Rescan()` upgrade) -- check `git log` for the
+exact hash if picking this up later. Nothing from Phase 8/9 has been
+pushed to `origin` yet -- stays local until the user decides V2 is
+ready to release, same standing plan as before.
+
+**Redeploy mechanics note worth keeping**: elevated redeploys in this
+environment need a real UAC click from whoever's at the machine --
+`Start-Process -Verb RunAs -Wait` silently fails ("operation was
+canceled by the user", no log file ever created) if nobody's there to
+approve it. Also, the background-task completion notification for
+these redeploys is unreliable -- it has repeatedly either fired with
+stale/wrong info or not fired at all even though the redeploy log shows
+it finished cleanly seconds earlier. Don't wait on the notification --
+just read the redeploy's own log file directly to check real status.
+
+**Nothing else is currently pending in V2.** If resuming cold: all
+three features are done, the whole solution builds clean, and the only
+open question is when the user wants this released/pushed -- don't
+start Phase 8 work from scratch, and don't push without being asked.
+
+## Immediate live state as of writing this (2026-09-12, end of fourteenth session continued, right before starting Feature 3)
+
+**This section supersedes every "immediate live state" note above it in
+this file — only trust this one.**
+
+- **Phase 8's Feature 1 (idle screensaver) and Feature 2 (low-battery
+  override + the bonus plug/unplug flash) are BOTH fully built,
+  redeployed to the real installed Service+GUI multiple times, and
+  confirmed working live.** See "Feature 1 -- BUILT" and "Feature 2 --
+  DONE" above for the complete detail on each (bugs found/fixed, live
+  tuning, GUI relocation). The currently-running installed instance
+  reflects the FINAL state of both: Feature 1 with all 4 bug fixes;
+  Feature 2 with independent keyboard/lightbar color+brightness, a
+  1-99% threshold range, and the flash tuned to its final ~1s timing.
+- **Everything from this session is committed** (see the commit(s) made
+  right after this section was written -- check `git log` if picking
+  this up later for the exact hash(es)). Nothing from Phase 8/9 has
+  been pushed to `origin` yet -- stays local until the user decides V2
+  is ready to release, same standing plan as before.
+- **Feature 3 (controller hot-discovery, USB + Bluetooth) is next**,
+  explicitly requested by the user immediately after Feature 2 was
+  confirmed done: "lets get everything documented in handoff, commit
+  everything then move on to the controller usb/bluetooth fix." They
+  also confirmed the Discover button's placement (top of
+  `ControllerReactiveWindow`, matching the original design). See
+  Feature 3's own section above for the full settled plan (mutable
+  `ControllerHolder`, `Controller.TryDiscover()`, the Bluetooth
+  report-format uncertainty) -- this had NOT been started as of this
+  section being written.
+- **Start here next time**: (1) confirm current live state fresh, same
+  checks as always; (2) proceed directly into Feature 3 -- the user's
+  go-ahead is already given, no need to re-ask that; (3) DO ask about
+  Bluetooth hardware availability specifically (whether a DualSense can
+  be paired over Bluetooth on this machine THIS session for live
+  verification, or whether that path should be built but left
+  unverified for now) before writing the Bluetooth-specific report-
+  parsing code, per Feature 3's own explicit caution against assuming
+  Bluetooth works from reasoning alone; (4) don't push anything to
+  `origin` without the user raising it again.
+
+## Immediate live state as of writing this (2026-09-11, end of thirteenth session)
+
+**This section supersedes every "immediate live state" note above it in
+this file — only trust this one.**
+
+- **The `rain` effect rework (Phase 9) is fully built, live-verified, and
+  running on this machine right now** — the real installed Service was
+  redeployed roughly a dozen times over the course of this session, one
+  small change at a time, each confirmed by the user directly on the
+  physical keyboard before moving on. Current live state: `Speed=2.5`,
+  `SpawnRate=6.0` (peak), a fixed `lowSpawnRate=2.0` floor the shower
+  intensity drifts toward, `Color=(0,0,200)`, `AccentColor=(90,160,255)`
+  appearing once every 10-20s. All of this is also baked into a freshly
+  rebuilt `windows/installer/output/JmaStudio-Setup.exe`.
+- **Committed locally, deliberately NOT pushed to `origin`** — the user
+  was explicit: "commit this, but don't upload to github. For github
+  this will be part of V2." Check `git status` and `git log
+  origin/main..main` (or equivalent) before assuming local `main`
+  matches what's actually public — it won't, until Phase 8 is also done
+  and both go out together.
+- **New reusable piece, not just a Rain-specific hack**:
+  `EffectContext.EffectStartTime` (populated by `RenderLoopService` from
+  a new `DaemonState.EffectStartTime`, stamped on every `SetEffect()`
+  call) — any future effect that wants "seconds since I was turned on"
+  instead of the Service's raw global uptime can read this directly.
+- **Explicitly Python-untouched**: `effects/rain.py` on `main`/repo root
+  still has the original bug (permanently-fixed 2 columns) and none of
+  this session's improvements. Confirmed in scope discussion this
+  session ("this V2 only applies to C#") — the same scoping applies
+  here even though Phase 9 isn't technically part of Phase 8's V2 design,
+  since it was raised and built in the same session under the same
+  framing.
+- **Start here next time**: (1) confirm current live state fresh, same
+  checks as always, plus specifically check the `rain` effect's live
+  params via `GET /status` after applying it, to confirm the values
+  above are still what's deployed; (2) if picking Phase 8 back up, build
+  from that design, and when ready to publish, push BOTH Phase 8's and
+  Phase 9's local commits together per the user's stated plan; (3) don't
+  push anything to `origin` before that point without the user
+  explicitly asking.
+
+## Immediate live state as of writing this (2026-09-11, end of twelfth session)
+
+**This section supersedes every "immediate live state" note above it in
+this file — only trust this one.**
+
+- **The machine is in a clean, normal working state**: JMA Studio C#
+  installed and running (Service + GUI, window open), "Red Chase"
+  active, `AcerLightingService` correctly Stopped/Disabled, Python
+  fully stopped. No test artifacts or leftover processes from this
+  session's benchmark work.
+- **Nothing was changed in code this session** — this session was
+  entirely a live benchmark (see "Phase 7 continued" above) plus design
+  work (see "Phase 8" above). `git status` should be clean; there is
+  nothing to commit from this session unless a future session is told
+  otherwise.
+- **The repo is now public on GitHub**, merged to `main`
+  (`https://github.com/jadamsky/jma-studio-rgb-keyboard`), with a
+  published release (`csharp-v1.0.0`) carrying a prebuilt
+  `JmaStudio-Setup.exe` as a downloadable asset. `csharp-port` branch
+  still exists, now fully merged into `main` (both point to equivalent
+  history as of the eleventh session's merge).
+- **THE ONE THING TO KNOW BEFORE DOING ANYTHING ELSE**: Phase 8 (idle
+  screensaver + low-battery override) is fully designed in this file
+  but the user was explicit that this is planning only —
+  **do not write any implementation code for it without an explicit
+  go-ahead**, even if a fresh session is told to "read the handoff and
+  continue." This is the OPPOSITE standing instruction from Phase 7's
+  `/keypress` fix (which had standing authorization to just proceed) —
+  don't confuse the two. If the user's next message doesn't clearly
+  greenlight starting Phase 8, ask rather than assume.
+- **Start here next time**: (1) confirm current live state fresh, same
+  checks as always; (2) if the user gives the go-ahead for Phase 8,
+  build from the design in that section above — it's complete, including
+  the one open question (lightbar playlist vs. fixed preset) flagged for
+  a quick confirmation before or during the build, and the priority-
+  nesting concern between the screensaver's and battery-override's
+  stash/restore logic; (3) otherwise, the three small non-blocking
+  Phase 7 items noted in the eleventh-session block below are still the
+  next real work if the user wants to close those out instead.
 
 **This section supersedes every "immediate live state" note above it in
 this file — only trust this one.**

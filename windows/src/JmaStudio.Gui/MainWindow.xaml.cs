@@ -28,6 +28,13 @@ public partial class MainWindow : Window
     // doubling the round-trip latency in front of every color update.
     private readonly DispatcherTimer _framePollTimer;
     private readonly DispatcherTimer _statusPollTimer;
+    // Slow poll (these only change when the user toggles a feature, not
+    // every frame) for the top-bar buttons' green-checkmark indicators --
+    // deliberately its own timer, not folded into the 750ms status poll
+    // above, matching this app's own established pattern (see
+    // KeypressForwarder's 3s gating poll) of keeping infrequent-change
+    // checks off the more frequent polling loops.
+    private readonly DispatcherTimer _featureStatusPollTimer;
     private bool _frameInFlight;
     private bool _statusInFlight;
     private LayoutResponse? _layout;
@@ -86,6 +93,8 @@ public partial class MainWindow : Window
         _framePollTimer.Tick += async (_, _) => await PollFrameAsync();
         _statusPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
         _statusPollTimer.Tick += async (_, _) => await PollStatusAsync();
+        _featureStatusPollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _featureStatusPollTimer.Tick += async (_, _) => await PollFeatureStatusAsync();
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
     }
@@ -108,6 +117,8 @@ public partial class MainWindow : Window
         await InitializeAsync();
         _framePollTimer.Start();
         _statusPollTimer.Start();
+        _featureStatusPollTimer.Start();
+        await PollFeatureStatusAsync();
     }
 
     private async Task InitializeAsync()
@@ -129,6 +140,7 @@ public partial class MainWindow : Window
             InitializeTypingReactivePanel();
             InitializeCustomKeysPanel();
             BuildCustomKeysCanvas();
+            await InitializeBatteryOverridePanelAsync();
             _suppressLiveApply = false;
 
             await PollStatusAsync();
@@ -267,6 +279,36 @@ public partial class MainWindow : Window
         {
             _statusInFlight = false;
         }
+    }
+
+    /// <summary>Green checkmark overlays on the Controller Reactive and
+    /// Screensaver top-bar buttons, indicating each is currently enabled --
+    /// requested live after the user built the screensaver window and
+    /// wanted an at-a-glance signal without opening either window.</summary>
+    private async Task PollFeatureStatusAsync()
+    {
+        try
+        {
+            ControllerReactiveStatusResponse? crStatus = await _api.GetControllerReactiveStatusAsync();
+            ControllerReactiveEnabledCheck.Visibility = crStatus?.Enabled == true ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch { /* leave whatever was last shown -- a transient failure here isn't worth a toast */ }
+
+        try
+        {
+            IdleScreensaverConfig? screensaverConfig = await _api.GetIdleScreensaverConfigAsync();
+            IdleScreensaverEnabledCheck.Visibility = screensaverConfig?.Enabled == true ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch { }
+
+        try
+        {
+            BatteryStatusResponse? battery = await _api.GetBatteryStatusAsync();
+            BatteryStatusText.Text = battery is not { HasBattery: true }
+                ? "Battery: not detected"
+                : $"Battery: {battery.Percent}% -- {(battery.OnBattery ? "on battery" : "plugged in")}";
+        }
+        catch { }
     }
 
     private void ReportUnreachable(Exception ex)
@@ -440,6 +482,21 @@ public partial class MainWindow : Window
         else
         {
             _controllerReactiveWindow.Activate();
+        }
+    }
+
+    private IdleScreensaverWindow? _idleScreensaverWindow;
+
+    private void IdleScreensaverBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_idleScreensaverWindow is null || !_idleScreensaverWindow.IsLoaded)
+        {
+            _idleScreensaverWindow = new IdleScreensaverWindow { Owner = this };
+            _idleScreensaverWindow.Show();
+        }
+        else
+        {
+            _idleScreensaverWindow.Activate();
         }
     }
 

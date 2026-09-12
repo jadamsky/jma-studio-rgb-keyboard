@@ -28,7 +28,7 @@ public static class Endpoints
 {
     public static void MapKeyboard(
         WebApplication app, DaemonState state, EffectRegistry registry, PresetStore store,
-        Keyboard? keyboard, Controller? controller)
+        Keyboard? keyboard, ControllerHolder controllerHolder)
     {
         app.MapGet("/status", () =>
         {
@@ -37,7 +37,7 @@ public static class Endpoints
             return Results.Ok(new
             {
                 keyboardConnected = keyboard is not null,
-                controllerConnected = controller?.IsConnected ?? false,
+                controllerConnected = controllerHolder.Current?.IsConnected ?? false,
                 currentEffect = effectName,
                 @params = parameters,
                 numCells = KeyboardConstants.NumCells,
@@ -276,7 +276,7 @@ public static class Endpoints
         });
     }
 
-    public static void MapControllerReactive(WebApplication app, ControllerReactiveManager manager, PresetStore store, Controller? controller)
+    public static void MapControllerReactive(WebApplication app, ControllerReactiveManager manager, PresetStore store, ControllerHolder controllerHolder)
     {
         app.MapGet("/controller-reactive/settings", () => Results.Ok(manager.GetLiveSettings()));
 
@@ -306,9 +306,30 @@ public static class Endpoints
 
         app.MapGet("/controller-reactive/status", () => Results.Ok(new
         {
-            connected = controller is not null && controller.IsConnected,
+            connected = controllerHolder.Current?.IsConnected ?? false,
             enabled = manager.Enabled,
+            bluetooth = controllerHolder.Current?.IsBluetooth ?? false,
         }));
+
+        // Phase 8 (V2) Feature 3: one button, searches USB and Bluetooth
+        // in a single scan (Controller.TryDiscover/FindControllerDevice
+        // enumerate both transports via the same VID/PID HID lookup) --
+        // no separate transport picker, matching the user's explicit UX
+        // request. Fixes the real bug this feature originated from:
+        // connecting the controller AFTER the Service is already running
+        // previously never worked, since `Controller?` was a fixed
+        // reference captured once at startup -- see ControllerHolder's
+        // own header comment.
+        app.MapPost("/controller-reactive/discover", () =>
+        {
+            bool found = controllerHolder.TryDiscover();
+            return Results.Ok(new
+            {
+                found,
+                connected = controllerHolder.Current?.IsConnected ?? false,
+                bluetooth = controllerHolder.Current?.IsBluetooth ?? false,
+            });
+        });
 
         // The "Default" button's target values -- a single source of
         // truth shared with ControllerReactiveParams' own record
@@ -333,7 +354,7 @@ public static class Endpoints
     /// switch to Python, switch to C#) are deliberately NOT here -- see
     /// DiagnosticsManager.cs's header comment for why those are separate
     /// elevated one-shot processes instead.</summary>
-    public static void MapDiagnostics(WebApplication app, DiagnosticsManager diagnostics, Controller? controller, string logFilePath)
+    public static void MapDiagnostics(WebApplication app, DiagnosticsManager diagnostics, ControllerHolder controllerHolder, string logFilePath)
     {
         app.MapGet("/diagnostics/status", () => Results.Ok(diagnostics.GetStatus()));
 
@@ -353,7 +374,7 @@ public static class Endpoints
         // controller" live viewer -- distinct from /controller-reactive/
         // status, which only reports connected+enabled, not the actual
         // per-frame state.
-        app.MapGet("/diagnostics/controller-live", () => controller is null
+        app.MapGet("/diagnostics/controller-live", () => controllerHolder.Current is not { } controller
             ? Results.Ok(new { connected = false, state = (ControllerState?)null })
             : Results.Ok(new { connected = controller.IsConnected, state = controller.GetState() }));
 
@@ -386,6 +407,51 @@ public static class Endpoints
         {
             inputListener.RecordKeyDown(req.Key);
             return Results.Ok();
+        });
+    }
+
+    /// <summary>Phase 8 (V2) idle screensaver. POST /idle-activity is
+    /// pinged by JmaStudio.Gui's IdleActivityMonitor (GetLastInputInfo
+    /// polling) only when it detects NEW keyboard/mouse input since its
+    /// last check -- not a constant heartbeat, to stay cheap. GET/POST
+    /// /idle-screensaver/config mirrors /lightbar/reactive's existing
+    /// GET/POST shape.</summary>
+    public static void MapIdleScreensaver(WebApplication app, IdleScreensaverManager manager, PresetStore store)
+    {
+        app.MapPost("/idle-activity", () =>
+        {
+            manager.RecordExternalActivity();
+            return Results.Ok();
+        });
+
+        app.MapGet("/idle-screensaver/config", () => Results.Ok(store.IdleScreensaverConfig.Load()));
+
+        app.MapPost("/idle-screensaver/config", (IdleScreensaverConfig config) =>
+        {
+            store.IdleScreensaverConfig.Save(config);
+            return Results.Ok();
+        });
+    }
+
+    /// <summary>Phase 8 (V2) low-battery lighting override. GET/POST
+    /// /battery-override/config mirrors /idle-screensaver/config's
+    /// existing GET/POST shape. GET /battery/status is a cheap
+    /// diagnostic reading (current percent + plugged-in state), useful
+    /// independent of this feature.</summary>
+    public static void MapLowBatteryOverride(WebApplication app, PresetStore store)
+    {
+        app.MapGet("/battery-override/config", () => Results.Ok(store.LowBatteryOverrideConfig.Load()));
+
+        app.MapPost("/battery-override/config", (LowBatteryOverrideConfig config) =>
+        {
+            store.LowBatteryOverrideConfig.Save(config);
+            return Results.Ok();
+        });
+
+        app.MapGet("/battery/status", () =>
+        {
+            (bool hasBattery, bool onBattery, int percent) = LowBatteryOverrideManager.GetBatteryStatus();
+            return Results.Ok(new { hasBattery, onBattery, percent });
         });
     }
 

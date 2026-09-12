@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:JmaStudio.Gui"
         mc:Ignorable="d"
-        Title="JMA Studio" Height="820" Width="1180"
+        Title="JMA Studio V2" Height="820" Width="1180"
         Icon="pack://application:,,,/Assets/app_icon.ico"
         Background="#0B0B12" Foreground="#EAEAF2"
         FontFamily="Segoe UI">
@@ -24,7 +24,18 @@
                     <Ellipse x:Name="HwStatusDot" Width="10" Height="10" Fill="Gray" Margin="0,0,6,0" VerticalAlignment="Center"/>
                     <TextBlock x:Name="HwStatusLabel" Text="checking..." VerticalAlignment="Center" Margin="0,0,16,0" Foreground="{StaticResource SubTextBrush}"/>
                     <Button x:Name="LightbarBtn" Content="Lightbar" Style="{StaticResource BtnGhost}" Click="LightbarBtn_Click"/>
-                    <Button x:Name="ControllerReactiveBtn" Content="Controller Reactive" Style="{StaticResource BtnGhost}" Click="ControllerReactiveBtn_Click"/>
+                    <Button x:Name="ControllerReactiveBtn" Style="{StaticResource BtnGhost}" Click="ControllerReactiveBtn_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Controller Reactive"/>
+                            <TextBlock x:Name="ControllerReactiveEnabledCheck" Text=" &#x2713;" Foreground="{StaticResource SuccessBrush}" FontWeight="Bold" Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="IdleScreensaverBtn" Style="{StaticResource BtnGhost}" Click="IdleScreensaverBtn_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Screensaver"/>
+                            <TextBlock x:Name="IdleScreensaverEnabledCheck" Text=" &#x2713;" Foreground="{StaticResource SuccessBrush}" FontWeight="Bold" Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Button>
                     <Button x:Name="DiagnosticsBtn" Content="Diagnostics" Style="{StaticResource BtnGhost}" Click="DiagnosticsBtn_Click"/>
                     <Button x:Name="OffBtn" Content="Off" Style="{StaticResource BtnGhost}" Click="OffBtn_Click"/>
                 </StackPanel>
@@ -53,6 +64,46 @@
                         <Border x:Name="PreviewBoardHost" Background="#101013" CornerRadius="6" Padding="10" SizeChanged="PreviewBoardHost_SizeChanged">
                             <Canvas x:Name="KeyboardCanvas" HorizontalAlignment="Center"/>
                         </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- Low Battery Override, Phase 8 (V2). Moved here from its
+                     own settings window: it wins over Screensaver and
+                     Controller Reactive for control of the keyboard, and is
+                     now a live-apply panel like Gradient/Reactive Typing/
+                     Custom Key Colors below, not a separate Save-button
+                     settings screen. -->
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Low Battery Override" Style="{StaticResource PanelHeader}"/>
+                            <CheckBox x:Name="BatteryEnabledCheck" Content="Enabled" HorizontalAlignment="Right" Checked="BatteryOption_Changed" Unchecked="BatteryOption_Changed"/>
+                        </DockPanel>
+                        <TextBlock x:Name="BatteryStatusText" Text="Battery: --" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,8"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,10"
+                                   Text="When unplugged and battery drops to or below this level, overrides the keyboard and lightbar to their own colors below until it's plugged in or charge recovers. This will override the screen saver and Controller Reactive if they are enabled."/>
+                        <DockPanel>
+                            <TextBlock x:Name="BatteryThresholdLabel" Text="15%" Width="70" VerticalAlignment="Center"/>
+                            <Slider x:Name="BatteryThresholdSlider" Minimum="1" Maximum="99" ValueChanged="BatteryThresholdSlider_ValueChanged"/>
+                        </DockPanel>
+                        <WrapPanel Margin="0,14,0,0">
+                            <StackPanel Margin="0,0,24,0">
+                                <TextBlock Text="Keyboard color" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="BatteryKeyboardSwatch"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,0">
+                                <TextBlock x:Name="BatteryKeyboardBrightnessHeader" Text="Keyboard brightness -- 30%" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <Slider x:Name="BatteryKeyboardBrightnessSlider" Width="200" Minimum="5" Maximum="100" ValueChanged="BatteryKeyboardBrightnessSlider_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,0">
+                                <TextBlock Text="Lightbar color" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="BatteryLightbarSwatch"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock x:Name="BatteryLightbarBrightnessHeader" Text="Lightbar brightness -- 30%" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <Slider x:Name="BatteryLightbarBrightnessSlider" Width="200" Minimum="5" Maximum="100" ValueChanged="BatteryLightbarBrightnessSlider_ValueChanged"/>
+                            </StackPanel>
+                        </WrapPanel>
                     </StackPanel>
                 </Border>
 

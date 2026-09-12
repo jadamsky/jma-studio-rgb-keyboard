@@ -5,6 +5,13 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- V2 (Phase 8) release labeling. Shows up in the .exe's own
+         file properties (Explorer's Details tab, Task Manager) and the
+         installer's AppVersion (JmaStudio.iss), which is kept in sync
+         with this by hand since Inno can't read a .csproj directly. -->
+    <Version>2.0.0</Version>
+    <Product>JMA Studio</Product>
+    <Company>Jake Adamsky</Company>
     <UseWPF>true</UseWPF>
     <!-- WPF has no built-in color picker. Rather than pull in a third-party
          control library for one widget, System.Windows.Forms.ColorDialog

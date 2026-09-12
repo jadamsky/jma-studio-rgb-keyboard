@@ -19,20 +19,20 @@ public sealed class RenderLoopService : BackgroundService
     private readonly EffectRegistry _registry;
     private readonly Keyboard? _keyboard;
     private readonly InputListener? _inputListener;
-    private readonly Controller? _controller;
+    private readonly ControllerHolder _controllerHolder;
     private readonly SelfTestGate _selfTestGate;
     private readonly ILogger<RenderLoopService> _logger;
 
     public RenderLoopService(
         DaemonState state, EffectRegistry registry, Keyboard? keyboard,
-        InputListener? inputListener, Controller? controller, SelfTestGate selfTestGate,
+        InputListener? inputListener, ControllerHolder controllerHolder, SelfTestGate selfTestGate,
         ILogger<RenderLoopService> logger)
     {
         _state = state;
         _registry = registry;
         _keyboard = keyboard;
         _inputListener = inputListener;
-        _controller = controller;
+        _controllerHolder = controllerHolder;
         _selfTestGate = selfTestGate;
         _logger = logger;
     }
@@ -73,7 +73,8 @@ public sealed class RenderLoopService : BackgroundService
                     {
                         KeyState = _inputListener?.Snapshot(KeyStateMaxAge) ?? new Dictionary<int, IReadOnlyList<double>>(),
                         Registry = _registry,
-                        ControllerState = _controller?.GetState(),
+                        ControllerState = _controllerHolder.Current?.GetState(),
+                        EffectStartTime = _state.EffectStartTime,
                     };
                     RgbColor[] colors = effect.Render(t, KeyboardConstants.NumCells, parameters, context);
                     if (_state.RecordFrame(colors))
