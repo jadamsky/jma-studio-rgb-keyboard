@@ -160,11 +160,17 @@ public sealed record RippleParams : EffectParams
 
 public sealed record RainParams : EffectParams
 {
-    public RgbColor Color { get; init; } = new(90, 160, 255);
+    public RgbColor Color { get; init; } = new(0, 0, 200);
     public RgbColor BaseColor { get; init; } = new(0, 0, 0);
-    public double Speed { get; init; } = 10.0;
-    public double SpawnRate { get; init; } = 3.0;
+    public double Speed { get; init; } = 2.5;
+    public double SpawnRate { get; init; } = 6.0;
     public double Tail { get; init; } = 2.5;
+    // The effect's original color, before it was changed above -- now a
+    // rare accent drop instead of the everyday color. See AccentMinGapSeconds/
+    // AccentMaxGapSeconds for how often it appears.
+    public RgbColor AccentColor { get; init; } = new(90, 160, 255);
+    public double AccentMinGapSeconds { get; init; } = 10.0;
+    public double AccentMaxGapSeconds { get; init; } = 20.0;
 }
 
 /// <summary>See effects/gradient.py's docstring for the full field-by-field

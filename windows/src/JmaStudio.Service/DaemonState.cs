@@ -4,6 +4,7 @@
 // disk persistence on every change (settled decision #9: boot-time
 // state via disk persistence, not an empty in-memory default).
 
+using System.Diagnostics;
 using JmaStudio.Effects;
 using JmaStudio.Hardware;
 using JmaStudio.Presets;
@@ -14,9 +15,19 @@ public sealed class DaemonState
 {
     private readonly object _lock = new();
     private readonly JsonStore<KeyboardPreset?> _liveStateStore;
+    // Own clock, not the render loop's -- SetEffect() is called from HTTP
+    // handlers, not the render loop, so it needs an independent way to
+    // stamp "when did the CURRENT effect become active" in the same time
+    // coordinate space RenderLoopService's own stopwatch uses (both start
+    // at Service startup, so they stay consistent to well within a frame).
+    // Added so effects like Rain can compute "time since I was activated"
+    // instead of only ever seeing the Service's raw global uptime -- see
+    // EffectStartTime below.
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
 
     private string _effectName;
     private EffectParams _params;
+    private double _effectStartTime;
     private RgbColor[] _lastFrame = Array.Empty<RgbColor>();
     private RgbColor[]? _lastSentFrame;
     private long _framesRendered;
@@ -49,6 +60,7 @@ public sealed class DaemonState
         {
             _effectName = effectName;
             _params = parameters;
+            _effectStartTime = _clock.Elapsed.TotalSeconds;
         }
         _liveStateStore.Save(new KeyboardPreset { Effect = effectName, Params = parameters });
     }
@@ -56,6 +68,15 @@ public sealed class DaemonState
     public (string EffectName, EffectParams Params) GetEffect()
     {
         lock (_lock) return (_effectName, _params);
+    }
+
+    /// <summary>The render loop's own `t` value (RenderLoopService's
+    /// stopwatch) at the moment the current effect was last activated --
+    /// lets an effect compute "seconds since I was turned on" via `t -
+    /// EffectStartTime` instead of only seeing raw Service uptime.</summary>
+    public double EffectStartTime
+    {
+        get { lock (_lock) return _effectStartTime; }
     }
 
     public RgbColor[] LastFrame

@@ -74,6 +74,7 @@ public sealed class RenderLoopService : BackgroundService
                         KeyState = _inputListener?.Snapshot(KeyStateMaxAge) ?? new Dictionary<int, IReadOnlyList<double>>(),
                         Registry = _registry,
                         ControllerState = _controller?.GetState(),
+                        EffectStartTime = _state.EffectStartTime,
                     };
                     RgbColor[] colors = effect.Render(t, KeyboardConstants.NumCells, parameters, context);
                     if (_state.RecordFrame(colors))
