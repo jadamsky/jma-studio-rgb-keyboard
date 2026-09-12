@@ -16,8 +16,8 @@
 ; invoked by this installer.
 
 #define AppName "JMA Studio"
-#define AppVersion "1.0.0"
-#define AppPublisher "JMA"
+#define AppVersion "2.0.0"
+#define AppPublisher "Jake Adamsky"
 #define ServiceName "JmaStudioService"
 #define ServiceDisplayName "JMA Studio"
 
@@ -33,10 +33,20 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=output
-OutputBaseFilename=JmaStudio-Setup
+OutputBaseFilename=JmaStudio-Setup-V2
 SetupIconFile=..\src\JmaStudio.Gui\Assets\app_icon.ico
 UninstallDisplayIcon={app}\Gui\JmaStudio.Gui.exe
-WizardStyle=modern
+; "dark" = forced dark mode (matches this app's own always-dark WPF
+; theme -- no light/auto toggle there either), using Inno 6.6.0+'s
+; native dark-mode engine rather than the hand-rolled Pascal Script
+; walk this replaced (see the [Code] section's own header comment on
+; this, right above InitializeWizard, for the full story). WizardBackColor
+; keeps JMA Studio's own brand background (the app's real #0B0B12,
+; same value MainWindow.xaml/App.xaml use) instead of Inno's generic
+; dark gray -- the custom wizard images/icon below are unaffected
+; either way, dark mode still displays those as-is.
+WizardStyle=modern dark
+WizardBackColor=#0B0B12
 WizardImageFile=assets\WizardImage.png
 WizardSmallImageFile=assets\WizardSmallImage.png
 ; Confirmed live: Inno Setup's "modern" style image control is larger
@@ -47,6 +57,16 @@ WizardSmallImageFile=assets\WizardSmallImage.png
 WizardImageStretch=yes
 Compression=lzma2
 SolidCompression=yes
+; Only active when build.ps1 detects a local "Jake Adamsky" self-signed
+; code-signing certificate and passes /DSignInstaller=1 + a matching
+; /Sjmasign=... sign-tool definition on the ISCC command line -- see
+; that script's own header comment for exactly what this does and does
+; not achieve (local-machine-only trust, not a real public signature).
+; Compiling this .iss directly (no defines) skips signing entirely,
+; same unsigned behavior as before.
+#ifdef SignInstaller
+SignTool=jmasign
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -101,6 +121,7 @@ Filename: "{app}\Gui\JmaStudio.Gui.exe"; Description: "Launch JMA Studio"; Flags
 [Code]
 var
   ConsentPage: TInputOptionWizardPage;
+  InstallModePage: TInputOptionWizardPage;
 
 const
   DataDirName = 'JMA Studio';
@@ -115,105 +136,71 @@ begin
   Result := ExpandConstant('{commonappdata}\' + DataDirName);
 end;
 
-// ---- dark palette + branding ----
-// Inno Setup's TColor is $BBGGRR (blue-green-red byte order), the
-// reverse of the app's own #RRGGBB brushes (App.xaml) -- every value
-// below is the app's real hex color with its bytes reversed, not a
-// separate palette invented for the installer.
-//
-// Naming individual WizardForm controls (the first approach here)
-// turned out incomplete live: several stock pages (Select Destination
-// Location, the custom consent page's own body) still showed default
-// white/black, because Inno Setup's per-page background panels and a
-// few instructional labels aren't exposed as named WizardForm
-// properties at all. Replaced with a recursive walk over every control
-// on the form instead -- catches everything, named or not, including
-// pages created later like ConsentPage. Native Win32 buttons/progress
-// bar are still left at default system style -- real owner-drawn
-// theming for those is a much deeper rabbit hole than this pass
-// justifies.
-const
-  ThemeBgColor = $120B0B;      // #0B0B12
-  ThemePanelColor = $1F1515;   // #15151F
-  ThemeTextColor = $F2EAEA;    // #EAEAF2
-  ThemeSubTextColor = $AB9A9A; // #9A9AAB
-
-procedure ThemeControl(C: TObject);
-var
-  I: Integer;
+// V2: detects a prior installation so the wizard can offer an Upgrade-
+// vs-Clean-Install choice (only shown at all when this is True -- a
+// genuine fresh install sees no extra page, same flow as before).
+// Checks two independent signals since either alone could miss a
+// partial/leftover state: the service registration key (survives even
+// if {app} was manually deleted) and the install directory itself
+// (covers the rarer case of a registered-but-not-yet-started service,
+// or a service delete that failed but files remain).
+function PriorInstallDetected(): Boolean;
 begin
-  if C is TNewNotebookPage then TNewNotebookPage(C).Color := ThemeBgColor
-  else if C is TPanel then TPanel(C).Color := ThemeBgColor
-  else if C is TNewStaticText then TNewStaticText(C).Font.Color := ThemeTextColor
-  else if C is TNewCheckListBox then
+  Result := RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\{#ServiceName}')
+    or DirExists(ExpandConstant('{app}'));
+end;
+
+// ---- dark theme: now via Inno's own NATIVE dark mode (WizardStyle=
+// modern dark, [Setup] section above), not hand-rolled Pascal Script.
+//
+// This replaces an entire generation of a hand-rolled `ThemeControl`
+// recursive-walk-and-recolor approach that shipped in Phase 7 and was
+// NEVER fully reliable: it needed one-off special-casing for stock
+// pages, individual sub-text labels, and, worst of all, the Restart
+// Manager "Preparing to Install" page's radio buttons/memo -- which
+// stayed unreadable through 3 separate live-tested fix attempts (two
+// wrong-class guesses, then a type-check-free direct-property write
+// that STILL didn't work), backlogged in HANDOFF.md as "do not
+// re-attempt without new evidence." The real evidence, found by
+// actually reading this machine's installed Inno Setup version's own
+// changelog rather than guessing a 4th time: Inno Setup 6.6.0 (2025-11-11)
+// added genuine, first-class dark-mode support built into the compiler/
+// runtime itself (`WizardStyle` appearance modes `light`/`dark`/
+// `dynamic`), which correctly themes EVERY page -- including ones
+// created dynamically at runtime, like Restart Manager's -- because
+// it's real VCL-level styling, not a script reaching in from outside
+// after the fact. Being verified live now (2026-09-12) against the
+// exact page that defeated 3 prior attempts -- see HANDOFF.md for the
+// outcome.
+procedure InitializeWizard();
+var
+  ConsentAnchor: Integer;
+begin
+  ConsentAnchor := wpWelcome;
+
+  // V2: Upgrade-vs-Clean-Install choice, only shown when a previous
+  // install is actually detected -- a genuine fresh install skips this
+  // page entirely (ConsentAnchor stays wpWelcome, so ConsentPage below
+  // appears exactly where it always did). Chained via ConsentAnchor
+  // (rather than both anchoring to wpWelcome directly) so the two
+  // custom pages are guaranteed to appear in the right order --
+  // multiple CreateInputOptionPage calls anchored to the SAME page ID
+  // don't reliably order themselves by creation order otherwise.
+  if PriorInstallDetected() then
   begin
-    TNewCheckListBox(C).Color := ThemePanelColor;
-    TNewCheckListBox(C).Font.Color := ThemeTextColor;
-  end
-  else if C is TNewEdit then
-  begin
-    TNewEdit(C).Color := ThemePanelColor;
-    TNewEdit(C).Font.Color := ThemeTextColor;
-  end
-  else if C is TRichEditViewer then
-  begin
-    TRichEditViewer(C).Color := ThemePanelColor;
-    TRichEditViewer(C).Font.Color := ThemeTextColor;
-  end
-  // The Restart Manager "Preparing to Install" page (shown live, this
-  // session, when a leftover JmaStudio.Gui.exe process was still
-  // running and locking a file Setup needed to overwrite) stayed
-  // unreadable even once the walk reached its controls (confirmed via a
-  // temporary Log(Name) diagnostic pass: FPreparingYesRadio/
-  // FPreparingNoRadio/FPreparingMemo ARE visited). Root cause: they're
-  // Inno's own TNewRadioButton/TNewMemo classes (same "New"-prefixed
-  // custom-drawn control family as TNewStaticText/TNewEdit/
-  // TNewCheckListBox above), not plain VCL TRadioButton/TMemo -- an
-  // earlier guess at those plain VCL class names compiled fine (they're
-  // valid identifiers in Inno's script engine) but silently never
-  // matched these actual runtime objects via `is`.
-  else if C is TNewRadioButton then TNewRadioButton(C).Font.Color := ThemeTextColor
-  else if C is TNewMemo then
-  begin
-    TNewMemo(C).Color := ThemePanelColor;
-    TNewMemo(C).Font.Color := ThemeTextColor;
+    InstallModePage := CreateInputOptionPage(wpWelcome,
+      'Existing Installation Found', 'Choose how to proceed',
+      'JMA Studio appears to already be installed on this computer.' + #13#10 + #13#10 +
+      'Upgrade keeps your saved presets and current settings -- the "rain" effect specifically is refreshed to this version''s improved defaults wherever it''s currently used, but everything else is left exactly as it is.' + #13#10 + #13#10 +
+      'Clean install stops and completely removes the existing installation (service, program files) before installing fresh. You''ll still be asked separately whether to keep your presets and configuration, even with Clean install.',
+      True, False);
+    InstallModePage.Add('Upgrade (recommended -- keep my presets and settings)');
+    InstallModePage.Add('Clean install (remove everything, then reinstall)');
+    InstallModePage.SelectedValueIndex := 0;
+    ConsentAnchor := InstallModePage.ID;
   end;
 
-  if C is TWinControl then
-    for I := 0 to TWinControl(C).ControlCount - 1 do
-      ThemeControl(TWinControl(C).Controls[I]);
-end;
-
-procedure ApplyDarkTheme();
-begin
-  WizardForm.Color := ThemeBgColor;
-  ThemeControl(WizardForm);
-  // A couple of description/sub-text labels read better a shade dimmer
-  // than the walk's blanket text color -- reapplied individually after,
-  // not instead of, the general pass.
-  WizardForm.PageDescriptionLabel.Font.Color := ThemeSubTextColor;
-  WizardForm.WelcomeLabel2.Font.Color := ThemeSubTextColor;
-  WizardForm.BeveledLabel.Font.Color := ThemeSubTextColor;
-
-  // The Restart Manager "Preparing to Install" page's radio buttons/memo
-  // stayed unreadable even after adding TNewRadioButton/TNewMemo `is`
-  // checks to the generic ThemeControl walk above (confirmed these ARE
-  // the real runtime classes via a Log(Name) diagnostic pass -- so
-  // either that `is` check itself doesn't behave as expected against
-  // Pascal Script's registered RTTI for these particular classes, or
-  // something else in the walk intercepts them first). Bypassing the
-  // walk entirely for just these three: WizardForm exposes them as
-  // documented public properties with a compile-time-known type, so
-  // this needs no runtime type check at all, unlike the generic walk.
-  WizardForm.PreparingYesRadio.Font.Color := ThemeTextColor;
-  WizardForm.PreparingNoRadio.Font.Color := ThemeTextColor;
-  WizardForm.PreparingMemo.Color := ThemePanelColor;
-  WizardForm.PreparingMemo.Font.Color := ThemeTextColor;
-end;
-
-procedure InitializeWizard();
-begin
-  ConsentPage := CreateInputOptionPage(wpWelcome,
+  ConsentPage := CreateInputOptionPage(ConsentAnchor,
     'Acer Lighting Service', 'This installer needs to disable a Windows service',
     'JMA Studio needs full control of your keyboard and rear lightbar lighting. To do that, it will stop AcerLightingService (the service behind Acer''s own PredatorSense lighting controls) and set its startup type to Disabled -- permanently, across reboots, until you uninstall JMA Studio or re-enable it yourself.' + #13#10 + #13#10 +
     'This does not affect any other PredatorSense feature -- only its lighting control.' + #13#10 + #13#10 +
@@ -221,17 +208,6 @@ begin
     False, False);
   ConsentPage.Add('I understand, and want to continue.');
   ConsentPage.Values[0] := False;
-
-  // Applied AFTER ConsentPage exists, so the walk reaches its controls
-  // too -- and again on every page change as a defensive backstop, in
-  // case any stock page repopulates/recreates a control later (e.g. the
-  // Ready page's summary memo).
-  ApplyDarkTheme();
-end;
-
-procedure CurPageChanged(CurPageID: Integer);
-begin
-  ApplyDarkTheme();
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -244,17 +220,123 @@ begin
   end;
 end;
 
+// Polls for a file to become deletable (i.e. its owning process has
+// actually released its handle) instead of guessing a fixed delay.
+// Originally added for uninstall (see the standing note further below,
+// near CurUninstallStepChanged, for the live incident that motivated
+// it) and reused here for install/upgrade's own pre-copy stop, for the
+// exact same reason: `sc stop`/`taskkill` return before the self-
+// contained .NET process has necessarily released its own .exe file
+// handle. Deleting the file here (rather than just checking it's
+// unlocked) is deliberate: it makes Inno's own later file-copy/removal
+// passes for this same tracked file a harmless no-op either way.
+procedure WaitForFileUnlocked(const FileName: String; MaxAttempts, DelayMs: Integer);
+var
+  I: Integer;
+begin
+  if not FileExists(FileName) then Exit;
+  for I := 1 to MaxAttempts do
+  begin
+    if DeleteFile(FileName) then Exit;
+    Sleep(DelayMs);
+  end;
+  // Still locked after the full wait -- log it and let Inno's own
+  // removal pass make one more attempt anyway, rather than looping
+  // forever on a machine where something unusual is holding the handle.
+  Log('WaitForFileUnlocked: gave up waiting for ' + FileName + ' to unlock.');
+end;
+
+// ---- upgrade safety: stop whatever's already running BEFORE files are
+// copied, so an install-over-an-existing-install doesn't try to
+// overwrite a locked, currently-running .exe (the Service runs as
+// LocalSystem and isn't something Inno's own Restart Manager prompt
+// handles -- that only covers ordinary user processes like the GUI).
+// Called from CurStepChanged's ssInstall case, which fires after the
+// wizard is done but BEFORE Inno starts copying any [Files] entries --
+// harmless no-op (both Exec calls just fail silently, ResultCode
+// unused) on a genuine fresh install where neither exists yet.
+procedure StopExistingInstallation();
+var
+  ResultCode: Integer;
+begin
+  Exec('sc.exe', 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/F /IM JmaStudio.Gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  WaitForFileUnlocked(ExpandConstant('{app}\Service\JmaStudio.Service.exe'), 40, 250);
+  WaitForFileUnlocked(ExpandConstant('{app}\Gui\JmaStudio.Gui.exe'), 40, 250);
+end;
+
+// V2: "Clean install" path, chosen on InstallModePage instead of the
+// default Upgrade. Deliberately does NOT reuse the full uninstaller
+// (which also asks about re-enabling AcerLightingService/Python
+// autostart) -- those two questions make no sense moments before this
+// SAME app reinstalls itself and immediately retakes lighting control
+// again, so they'd just be confusing noise here. This is a narrower,
+// purpose-built wipe: stop everything, delete the service registration
+// outright (not just reconfigure -- InstallService() will recreate it
+// fresh afterward), remove the whole {app} directory tree, and --
+// per the user's explicit "still ask about presets and current
+// effects" instruction -- separately ask whether to also wipe
+// AppDataRoot() (presets/config/live-state), with the SAME Yes-keeps-
+// them semantics as the uninstaller's own equivalent prompt. Runs at
+// CurStepChanged's ssInstall step, i.e. before any [Files] copying, in
+// place of StopExistingInstallation() (this supersedes it -- calling
+// both would be redundant, not harmful, but there's no reason to).
+procedure PerformCleanWipe();
+var
+  ResultCode: Integer;
+  KeepData: Boolean;
+begin
+  KeepData := (MsgBox('You chose Clean Install.' + #13#10 + #13#10 +
+    'Would you like to KEEP your existing JMA Studio presets and configuration (' + AppDataRoot() + ')?' + #13#10 + #13#10 +
+    'Choose Yes to keep them, or No to delete them and start completely fresh.',
+    mbConfirmation, MB_YESNO) = IDYES);
+
+  Exec('taskkill.exe', '/F /IM JmaStudio.Gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('sc.exe', 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  WaitForFileUnlocked(ExpandConstant('{app}\Service\JmaStudio.Service.exe'), 40, 250);
+  WaitForFileUnlocked(ExpandConstant('{app}\Gui\JmaStudio.Gui.exe'), 40, 250);
+  Exec('sc.exe', 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  DelTree(ExpandConstant('{app}'), True, True, True);
+
+  if not KeepData then
+  begin
+    DelTree(AppDataRoot(), True, True, True);
+  end;
+end;
+
 // ---- service registration (done here, not [Run]/[Registry], so the
 // create -> set-env -> start ordering is guaranteed rather than relying
 // on section-processing order) ----
+// Upgrade-safe: checks whether the service already exists (`sc query`
+// exits 1060/ERROR_SERVICE_DOES_NOT_EXIST if not) rather than always
+// calling `sc create`, which would otherwise silently fail every time
+// on an upgrade (a service name that already exists can't be
+// re-created) -- ResultCode from that failed call was never even
+// checked before, so this was a real latent bug, just one that
+// happened not to matter yet since binPath/DisplayName never changed
+// between versions. An existing registration is reconfigured (in case
+// either ever does change) rather than left untouched.
 procedure InstallService();
 var
   ServiceExe, EnvBlock, RegArgs: String;
   ResultCode: Integer;
+  AlreadyExists: Boolean;
 begin
   ServiceExe := ExpandConstant('{app}\Service\JmaStudio.Service.exe');
 
-  Exec('sc.exe', Format('create %s binPath= "%s" start= auto obj= LocalSystem DisplayName= "%s"', ['{#ServiceName}', ServiceExe, '{#ServiceDisplayName}']), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('sc.exe', 'query {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  AlreadyExists := (ResultCode <> 1060);
+
+  if AlreadyExists then
+  begin
+    Log('Service already registered -- reconfiguring instead of re-creating.');
+    Exec('sc.exe', Format('config %s binPath= "%s" start= auto obj= LocalSystem DisplayName= "%s"', ['{#ServiceName}', ServiceExe, '{#ServiceDisplayName}']), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end
+  else
+  begin
+    Exec('sc.exe', Format('create %s binPath= "%s" start= auto obj= LocalSystem DisplayName= "%s"', ['{#ServiceName}', ServiceExe, '{#ServiceDisplayName}']), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
   Exec('sc.exe', Format('description %s "Drives the keyboard, rear lightbar, and controller-reactive lighting for JMA Studio."', ['{#ServiceName}']),
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
@@ -327,11 +409,49 @@ begin
   CopyFile(ExpandConstant('{app}\DefaultData\keymap.json'), AppDataRoot() + '\keymap.json', False);
 end;
 
+// ---- the ONE named exception to "never touch existing presets/effect
+// data on an upgrade": the user explicitly asked that the "rain" effect
+// specifically pick up this release's reworked defaults (Phase 9 --
+// bug fix, fade-in, dynamic shower intensity, accent drop) wherever
+// it's currently in use, on every install (fresh or upgrade) -- not
+// just SeedDefaultDataIfMissing's fresh-install-only seeding above.
+// Delegates to JmaStudio.Service.exe's own --migrate-rain-defaults mode
+// (Program.cs) rather than reimplementing JSON handling in Pascal
+// Script -- that mode reuses the exact same PresetStore/JSON-converter
+// code the Service itself uses, so this can't drift out of sync with
+// how presets/live-state are actually shaped. Runs the freshly-copied
+// exe directly as a one-shot console invocation (it detects the
+// migration flag before doing anything service-like and exits
+// immediately) -- safe to run before the service itself is
+// (re)started.
+procedure RefreshRainDefaults();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{app}\Service\JmaStudio.Service.exe'),
+    '--migrate-rain-defaults "' + DataDir() + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  // Fires after the wizard is done but BEFORE Inno copies any [Files]
+  // entries -- the right moment to either stop whatever's already
+  // running (Upgrade, or a genuine fresh install where both are no-ops)
+  // or fully wipe the previous installation first (Clean install, only
+  // reachable when InstallModePage exists AND its second option was
+  // picked).
+  if CurStep = ssInstall then
+  begin
+    if Assigned(InstallModePage) and (InstallModePage.SelectedValueIndex = 1) then
+      PerformCleanWipe()
+    else
+      StopExistingInstallation();
+  end;
+
   if CurStep = ssPostInstall then
   begin
     SeedDefaultDataIfMissing();
+    RefreshRainDefaults();
     InstallService();
     DisablePythonAutostartIfPresent();
   end;
@@ -356,32 +476,6 @@ var
   KeepUserData: Boolean;
   ReEnableAcerService: Boolean;
   ReEnablePythonAutostart: Boolean;
-
-// Polls for a file to become deletable (i.e. its owning process has
-// actually released its handle) instead of guessing a fixed delay.
-// Replaces an earlier Sleep(2000)-after-sc-stop fix that turned out to
-// be a real race, not a guarantee -- confirmed live: it worked on one
-// uninstall test and then still lost the race on a later one, leaving
-// JmaStudio.Service.exe behind again with the same "some elements could
-// not be removed" warning the original fix was meant to close out.
-// Deleting the file here (rather than just checking it's unlocked) is
-// deliberate: it makes Inno's own later removal pass for this same
-// tracked file a harmless no-op either way.
-procedure WaitForFileUnlocked(const FileName: String; MaxAttempts, DelayMs: Integer);
-var
-  I: Integer;
-begin
-  if not FileExists(FileName) then Exit;
-  for I := 1 to MaxAttempts do
-  begin
-    if DeleteFile(FileName) then Exit;
-    Sleep(DelayMs);
-  end;
-  // Still locked after the full wait -- log it and let Inno's own
-  // removal pass make one more attempt anyway, rather than looping
-  // forever on a machine where something unusual is holding the handle.
-  Log('WaitForFileUnlocked: gave up waiting for ' + FileName + ' to unlock.');
-end;
 
 function InitializeUninstall(): Boolean;
 var

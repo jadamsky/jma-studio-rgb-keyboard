@@ -10,6 +10,29 @@ current at every phase boundary: status, what's verified on real
 hardware vs. still assumed, key decisions and why, and how to build/
 run/test whatever exists so far.
 
+**STANDING RULE, added 2026-09-12, applies every session, check this
+before retrying an elevated command a second time**: elevated
+operations in this environment (`Start-Process -Verb RunAs -Wait`, used
+for every Service/GUI redeploy and for anything touching the
+certificate/trust stores) require a REAL UAC click from whoever is at
+the keyboard. If one fails with "The operation was canceled by the
+user" and no log file was created by the script it was supposed to run
+(check for the script's own log, not just the task notification, which
+is unreliable — see the redeploy-mechanics note further down this
+file), that means the prompt was never approved, NOT that anything
+actually ran and failed. **If this happens twice in a row on the same
+action, stop retrying it and assume the user has gone AFK** — do not
+keep re-issuing the same elevated command hoping they'll notice a
+stuck dialog. Instead: say plainly, in one message, that the prompt
+isn't being approved, that you're assuming they're AFK, exactly what
+you were trying to do and why it's blocked, and that you'll wait for
+them to come back and say so before trying again. Continue with
+everything else in the current task that does NOT need elevation in
+the meantime, and keep `HANDOFF.md` current enough that a context
+compaction during that wait doesn't lose the thread (see this file's
+own fifteenth-session sections for a worked example of doing exactly
+this during a real multi-hour AFK gap).
+
 ## The goal
 
 Full port of the hardware/daemon side of JMA Studio (per-key keyboard
@@ -38,8 +61,9 @@ and forwarding over a new `POST /keypress` endpoint, user-confirmed
 working live ("I just tested your live update, it works" — see "Fix
 built and verified (2026-09-10, eighth session)"). A ninth session
 found and fixed 2 real uninstall bugs (not yet re-verified) and hit one
-backlogged theming bug (3 fix attempts failed, do not re-attempt
-without new evidence). A tenth session tested real sleep/hibernate/
+backlogged theming bug (3 fix attempts failed at the time -- FIXED in
+Phase 10/fifteenth session via Inno's native dark-mode support, see
+that section). A tenth session tested real sleep/hibernate/
 restart resilience: sleep passed clean, hibernate found one WON'T-FIX
 cosmetic gap (user declined the fix), and restart passed clean —
 closing out the last open question with the user's own unprompted
@@ -2196,7 +2220,7 @@ now the ONLY remaining unverified item blocking Phase 7 from being
 called fully done, alongside the still-unverified `WizardImageStretch`
 fix (see "Immediate live state" at the end of this file).
 
-### Uninstall live-tested: 2 real bugs found + fixed (NOT yet re-verified); 1 theming bug found, backlogged (2026-09-11, ninth session)
+### Uninstall live-tested: 2 real bugs found + fixed (NOT yet re-verified); 1 theming bug found, backlogged -- FIXED in Phase 10, see that section (2026-09-11, ninth session)
 
 The user explicitly asked to test the uninstall's `Sleep(2000)` fix live
 (never actually re-verified after being added in the seventh session --
@@ -2275,6 +2299,18 @@ re-running `ApplyDarkTheme` on a short delay/timer after landing on this
 page) rather than another one-shot class guess at `CurPageChanged` time.
 The `Log(Name)` diagnostic pattern used to find the real control names
 here is worth reusing directly if this is picked back up.
+
+**UPDATE (2026-09-12, Phase 10, fifteenth session): FIXED, confirmed
+live.** The theory above (structural/timing, not a wrong-class guess)
+was correct in spirit, but the actual fix didn't need a custom delay
+hook at all -- it needed real evidence from OUTSIDE this file's own
+prior attempts: this machine's installed Inno Setup version (6.6.0+)
+turned out to already have genuine native dark-mode support
+(`WizardStyle=modern dark`) that correctly themes every page, including
+ones created dynamically at runtime, making the entire hand-rolled
+`ThemeControl`/`ApplyDarkTheme` approach (and this whole backlogged bug)
+obsolete. See "Phase 10"'s item 5 for the full writeup -- the fix has
+been live-confirmed, this is no longer an open issue.
 
 ### Uninstall re-enabling AcerLightingService caused Python to silently take back over (2026-09-11, eleventh session) — fixed, NOT yet live-tested
 
@@ -3297,6 +3333,254 @@ merged/public from the eleventh session), but this commit should stay
 local/unpushed until Phase 8's V2 work is ready to go out together with
 it. Whoever picks this up next: check `git log`/`git status` before
 assuming what's actually been pushed to `origin` matches local `main`.
+
+## Phase 10: V2 installer polish -- version/publisher labeling, upgrade safety, rain-defaults migration, self-signed code signing, native dark mode (2026-09-12, fifteenth session continued)
+
+Started right after the user confirmed all three V2 features working
+("is there anything else we need to finish?" -> yes, this). Five
+distinct asks (the 5th arrived mid-live-test), all built AND, unlike
+most of this file's other installer work, actually click-tested live
+through the real `Setup.exe` before being called done:
+
+**1. V2 labeling.** `JmaStudio.iss`: `AppVersion` "1.0.0" -> "2.0.0",
+`AppPublisher` "JMA" -> "Jake Adamsky", `OutputBaseFilename`
+"JmaStudio-Setup" -> "JmaStudio-Setup-V2". `JmaStudio.Gui.csproj` and
+`JmaStudio.Service.csproj` both got `<Version>2.0.0</Version>`,
+`<Product>JMA Studio</Product>`, `<Company>Jake Adamsky</Company>` --
+these flow into the actual .exe file's own Explorer/Task-Manager
+Details tab, not just the installer. `MainWindow.xaml`'s window Title
+changed from "JMA Studio" to "JMA Studio V2" so the running app itself
+is labeled too, not just its installer/file metadata.
+
+**2. Upgrade safety.** Two real gaps found by reading the existing
+script, not just assumed:
+- `SeedDefaultDataIfMissing()` already only seeds on a genuine fresh
+  install (checks `DirExists(DataDir())`) -- this part was already
+  correct, no change needed.
+- **Real bug**: nothing stopped the existing Service/GUI before
+  [Files] copied over an existing install. `InstallService()`'s
+  unconditional `sc create` would also silently fail on an upgrade
+  (`ResultCode` was never checked) since a service name that already
+  exists can't be re-created -- happened not to matter yet only because
+  binPath/DisplayName never changed between versions. **Fixed**: new
+  `StopExistingInstallation()` (stops the service, kills the GUI,
+  waits for both .exe files to unlock via the SAME `WaitForFileUnlocked`
+  helper the uninstall path already used -- relocated earlier in the
+  script so it can be called from both places) runs at `CurStepChanged`'s
+  `ssInstall` step, which fires BEFORE Inno copies any files. `Install
+  Service()` now checks `sc query`'s exit code (1060 =
+  ERROR_SERVICE_DOES_NOT_EXIST) and branches: `sc config` to reconfigure
+  an existing registration, `sc create` only for a genuinely new one.
+- **Hit and fixed live during testing**: `TSetupStep`'s pre-install
+  value is `ssInstall`, NOT `ssInstalling` as first written (a
+  plausible-sounding guess that doesn't exist in Inno's actual enum) --
+  caught immediately by ISCC's own compiler error, not shipped wrong.
+
+**3. Rain-defaults migration -- the one named exception to "never touch
+existing presets/effect data."** The user was explicit and emphatic:
+upgrading must NOT reset presets or the current effect, EXCEPT rain,
+which should pick up Phase 9's reworked defaults wherever it's
+currently used. Implemented as a new `--migrate-rain-defaults <dataDir>`
+CLI mode on `JmaStudio.Service.exe` itself (`Program.cs`, checked
+before anything else in the file, exits immediately without starting
+the web host) rather than reimplementing JSON handling in Pascal
+Script -- reuses the exact same `PresetStore`/`EffectParamsJsonConverter`
+code the Service already uses, so it can't drift from how presets/
+live-state are actually shaped. Refreshes BOTH `live-keyboard-state.json`
+(if its current effect is "rain") AND any entry in `keyboard-presets.json`
+whose effect is "rain" (a preset saved before Phase 9's rework would
+otherwise stay stuck on the old, buggier numbers forever) -- every
+OTHER effect/preset is left completely untouched. `JmaStudio.iss`'s
+`RefreshRainDefaults()` calls this on every install (fresh or upgrade)
+at `ssPostInstall`, after `SeedDefaultDataIfMissing()`. **Tested
+directly, not just reasoned through**: ran the published Service.exe
+against a scratch data directory with a live "rain" state (old
+Speed=10/Color=(90,160,255)/SpawnRate=3) and a saved preset using rain
+with the same old values, plus an unrelated "static" preset. Confirmed
+live: both rain entries were rewritten to the new defaults
+(Speed=2.5/Color=(0,0,200)/SpawnRate=6, plus the new AccentColor/
+AccentMinGapSeconds/AccentMaxGapSeconds fields), and the unrelated
+static preset was byte-for-byte untouched.
+
+**4. Self-signed code signing, so UAC shows "Jake Adamsky" instead of
+"Unknown Publisher"** -- explicitly scoped by the user as local-machine-
+only ("Im never getting a [real] certificate, this is just a fun
+project"), after being told plainly that a real trusted certificate
+costs money and takes days, and that a self-signed one only helps on
+the machine that creates+trusts it (anyone downloading this from GitHub
+still sees "Unknown Publisher" unless they also manually trust the
+cert, which isn't realistic to ask of real users). Plan: `New-
+SelfSignedCertificate` (Subject "CN=Jake Adamsky", CodeSigningCert,
+`Cert:\LocalMachine\My`, 10-year validity) once, then import its public
+cert into `Cert:\LocalMachine\Root` AND `Cert:\LocalMachine\
+TrustedPublisher` so THIS machine treats it as trusted. `build.ps1`
+detects the cert (`Get-ChildItem Cert:\LocalMachine\My -CodeSigningCert`
+matching the subject) and `signtool.exe` (found via `Windows Kits\10\
+bin\*\x64\signtool.exe`, present on this machine) and, if both exist,
+signs the published `JmaStudio.Gui.exe`/`JmaStudio.Service.exe` right
+after publish, and passes `/DSignInstaller=1` plus an inline `/Sjmasign=
+...` sign-tool definition to `ISCC.exe` so `JmaStudio.iss`'s own
+`#ifdef SignInstaller ... SignTool=jmasign ... #endif` block signs the
+final `Setup.exe` too. Entirely best-effort/graceful: if the cert or
+signtool aren't present (e.g. building on a different machine), both
+exes and the installer are simply left unsigned with a console warning,
+exactly like before this session -- zero risk of a broken build.
+
+**CONFIRMED working end-to-end.** The certificate creation needed 5
+elevated-UAC attempts total across two separate waits for the user to
+return before it actually landed (see the standing rule at the very
+top of this file, added specifically because of this). Once created,
+the FIRST signing attempt (via a plain, unelevated `build.ps1` run)
+failed with "SignTool Error: No certificates were found that met all
+the given criteria" -- root cause: the certificate's private key lives
+in `Cert:\LocalMachine\My`, which an unelevated process can enumerate
+(hence `Get-ChildItem` finding it fine) but not actually USE for
+signing. Fix: run `build.ps1` itself elevated too. Re-ran elevated and
+confirmed via `Get-AuthenticodeSignature` on all three outputs
+(`JmaStudio.Service.exe`, `JmaStudio.Gui.exe`, `JmaStudio-Setup-V2.exe`)
+-- all three: `Status: Valid`, `Subject: CN=Jake Adamsky`. Note for
+whoever runs this next: **`build.ps1` must be run elevated for signing
+to work**, not just for the one-time cert-creation script.
+
+**One more ask added mid-Phase-10, also built**: the user wants the
+installer to detect an existing installation and offer a real choice
+between Upgrade (the behavior above) and Clean Install (stop
+everything, delete the service registration outright, and `DelTree`
+the whole `{app}` directory -- but STILL separately ask whether to keep
+presets/configuration, exactly like the uninstaller's own equivalent
+prompt, per the user's explicit "still ask about pre-sets and current
+effects" carve-out). Built as:
+- `PriorInstallDetected()`: checks both the service registration key
+  (`RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\
+  JmaStudioService')`) and `DirExists('{app}')` -- either alone could
+  miss a partial/leftover state.
+- A new `InstallModePage` (`CreateInputOptionPage`, exclusive radio
+  choice), only created/shown when `PriorInstallDetected()` is true --
+  a genuine fresh install sees no extra page at all, zero behavior
+  change. Chained via `ConsentAnchor` (not both custom pages anchored
+  directly to `wpWelcome`) so the two pages are guaranteed to appear in
+  the right order -- multiple pages anchored to the exact same page ID
+  don't reliably self-order otherwise.
+- `PerformCleanWipe()`: deliberately does NOT just invoke the existing
+  uninstaller -- that also asks about re-enabling AcerLightingService/
+  Python autostart, which would be confusing noise moments before this
+  SAME app reinstalls itself and immediately retakes lighting control
+  again. Instead a narrower, purpose-built wipe: ask the keep-data
+  question first, then stop the GUI/service, `sc delete` the service
+  outright (not just reconfigure -- `InstallService()` recreates it
+  fresh afterward since `sc query` will correctly find nothing), `DelTree
+  {app}`, and `DelTree` `AppDataRoot()` too only if the user said no to
+  keeping their data.
+- `CurStepChanged`'s `ssInstall` case now branches: `PerformCleanWipe()`
+  if `InstallModePage` exists and its second option was picked,
+  `StopExistingInstallation()` otherwise (covers both Upgrade and a
+  genuine fresh install, exactly as before this addition).
+- **Confirmed live**: the user ran the real `Setup.exe` over their
+  existing install and completed the Upgrade path successfully -- see
+  "Immediate live state" below for the full confirmation (Service+GUI
+  came back up, their own live effect setup was preserved exactly).
+  Clean Install specifically has not been separately click-tested (the
+  user tested Upgrade), but shares the same underlying Exec/DelTree
+  primitives the uninstall path already uses successfully elsewhere.
+
+**5. Native dark mode -- fixes a real, long-backlogged bug, found DURING
+the live test above.** Running the actual `Setup.exe` hit the Restart
+Manager "Preparing to Install" page (the user's own `JmaStudio.Gui.exe`/
+Service were still running) and it was STILL unreadable -- this is the
+EXACT bug from the ninth session, backlogged after 3 failed fix
+attempts with an explicit "do not re-attempt without new evidence" (see
+that session's own section for the full history: two wrong-control-
+class guesses, then a type-check-free direct-property write that still
+didn't work). The user said plainly: this is a standing problem, fix it
+now, and to look online if needed. Real evidence this time, not a 4th
+guess: reading THIS machine's actual installed Inno Setup version's own
+changelog revealed Inno Setup 6.6.0+ (released 2025-11-11, well before
+this version) added genuine native dark-mode support built into the
+compiler/runtime itself -- `WizardStyle=modern dark` (forced dark,
+matching this app's own always-dark WPF theme, no light/auto toggle
+there either) correctly themes EVERY page, including ones created
+dynamically at runtime, because it's real VCL-level styling rather than
+a script reaching in from outside after the page already exists. This
+is exactly why the old approach could never win: three different
+"guess the right control class" attempts were solving the wrong
+problem -- the real issue was structural/timing, precisely as this
+file's own backlogged note had already suspected but couldn't confirm
+without new evidence.
+- **Removed entirely**: the hand-rolled `ThemeControl` recursive-walk
+  procedure, `ApplyDarkTheme`, the `ThemeBgColor`/`ThemePanelColor`/
+  `ThemeTextColor`/`ThemeSubTextColor` constants, and `CurPageChanged`
+  (which existed only to re-run `ApplyDarkTheme` on every page change).
+  All superseded by the native engine.
+- **Branding preserved per the user's explicit "make sure it keeps my
+  branding"**: `WizardBackColor=#0B0B12` keeps the app's own brand
+  background color (the exact value `MainWindow.xaml`/`App.xaml` use)
+  instead of Inno's generic dark gray. The custom `WizardImageFile`/
+  `WizardSmallImageFile`/`SetupIconFile` (JMA Studio's own wizard art
+  and icon) are unaffected either way -- dark mode still displays
+  custom images/icons as documented in Inno's own changelog.
+- **Confirmed live, immediately, on the very next install attempt**:
+  the user re-ran the fixed `Setup.exe` and confirmed "seems to have
+  worked" -- the Restart Manager page that defeated 3 prior sessions'
+  worth of attempts was finally readable.
+
+## Immediate live state as of writing this (2026-09-12, fifteenth session continued, Phase 10 fully DONE)
+
+**This section supersedes every "immediate live state" note below it in
+this file — only trust this one.**
+
+**All of Phase 10 is built, signed, and confirmed live end-to-end,
+including a real live test run of the actual `Setup.exe`.** The AFK
+pause documented in this file's git history resolved itself -- the
+user came back, the certificate got created (5th attempt), and once
+`build.ps1` was re-run ELEVATED (the real fix -- an unelevated run can
+enumerate the cert but not use its private key to sign anything), all
+three outputs signed successfully, confirmed via `Get-
+AuthenticodeSignature`: `Status: Valid`, `Subject: CN=Jake Adamsky` on
+`JmaStudio.Service.exe`, `JmaStudio.Gui.exe`, and `JmaStudio-Setup-V2.exe`.
+
+**A genuinely long-backlogged bug got fixed in the middle of the live
+test run**: the user ran the real `Setup.exe` over their existing
+install, hit the Restart Manager "Preparing to Install" page (their
+`JmaStudio.Gui.exe`/Service were still running), and it was STILL
+unreadable -- the exact `PreparingYesRadio`/`PreparingNoRadio`/
+`PreparingMemo` bug from the ninth session, backlogged after 3 failed
+fix attempts with an explicit "do not re-attempt without new evidence."
+The user said plainly: this is a standing problem, fix it now. Found
+real evidence this time (reading this machine's actual installed Inno
+Setup version's changelog, not guessing a 4th control-class name):
+Inno Setup 6.6.0+ added genuine native dark-mode support
+(`WizardStyle=modern dark`) that correctly themes every page, including
+ones created dynamically at runtime -- which is exactly what defeated
+the old hand-rolled `ThemeControl`/`ApplyDarkTheme` recursive-walk
+script (removed entirely, along with `CurPageChanged`, which existed
+only to re-run it). `WizardBackColor=#0B0B12` keeps the app's own brand
+background color instead of Inno's generic dark gray, per the user's
+explicit "make sure it keeps my branding" -- the custom wizard images/
+icon were unaffected either way. **Confirmed live, immediately, in the
+very next install attempt**: the user re-ran the fixed `Setup.exe` and
+confirmed it "seems to have worked" -- and the full install completed
+successfully (Service+GUI both running afterward, and the user's own
+live `typing_reactive`+`custom_keys` effect setup was preserved exactly,
+confirming the Upgrade path's data-preservation behavior works
+correctly on a real install, not just in the earlier scratch-directory
+test).
+
+**Everything from this session (Phases 8, 9, and 10) needs a final
+`git status` check and one commit for Phase 10** -- Phases 8/9 were
+already committed in prior sessions (`d60884e`, `e8ac8f5`, `f766cf5`).
+Phase 10's modified files: `installer/JmaStudio.iss`, `installer/
+build.ps1`, `JmaStudio.Gui.csproj`, `JmaStudio.Service.csproj`,
+`MainWindow.xaml`, `Program.cs` (the `--migrate-rain-defaults` mode),
+plus this file. `installer/output/*` and `installer/publish/*` are
+build artifacts, not tracked by git -- verify `git status` doesn't try
+to stage them (should already be gitignored; double-check before any
+`git add`).
+
+**Nothing else is pending.** V2 (all three Phase 8 features) plus
+Phase 10's installer polish are fully built and live-verified. The only
+remaining decision is the user's own call on when to push to `origin`/
+release -- don't push without being asked, and don't start new work
+without the user raising it.
 
 ## Immediate live state as of writing this (2026-09-12, fifteenth session, V2 complete)
 

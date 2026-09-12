@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:JmaStudio.Gui"
         mc:Ignorable="d"
-        Title="JMA Studio" Height="820" Width="1180"
+        Title="JMA Studio V2" Height="820" Width="1180"
         Icon="pack://application:,,,/Assets/app_icon.ico"
         Background="#0B0B12" Foreground="#EAEAF2"
         FontFamily="Segoe UI">

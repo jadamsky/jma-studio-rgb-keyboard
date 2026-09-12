@@ -19,6 +19,14 @@ using JmaStudio.Hardware;
 using JmaStudio.Presets;
 using JmaStudio.Service;
 
+// Installer-invoked one-time migration mode -- see MigrateRainDefaults's
+// own comment below. Handled before anything else in this file so it
+// exits immediately without starting the web host/service at all.
+if (args.Length > 0 && args[0] == "--migrate-rain-defaults")
+{
+    return MigrateRainDefaults(args.Length > 1 ? args[1] : Environment.GetEnvironmentVariable("JMASTUDIO_DATA_DIR") ?? "");
+}
+
 DateTime serviceStartedAtUtc = DateTime.UtcNow;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -217,6 +225,7 @@ Endpoints.MapLowBatteryOverride(app, presetStore);
 // Loopback-only, same port the Python daemon used -- no auth either
 // way, trusted purely by being on 127.0.0.1, matching daemon/server.py.
 app.Run("http://127.0.0.1:8420");
+return 0;
 
 static T? TryOpen<T>(string label, Func<T> open, ILogger logger) where T : class
 {
@@ -247,4 +256,57 @@ static (string Effect, EffectParams Params) ResolveStartupEffect(PresetStore sto
         return (preset.Effect, preset.Params);
     }
     return ("static", new StaticParams());
+}
+
+// Installer-invoked, ONE-TIME upgrade migration -- NOT part of normal
+// Service startup, never runs on its own. The user explicitly asked
+// that installing V2 over an existing install must NOT reset saved
+// presets or the current live effect, WITH ONE NAMED EXCEPTION: "rain"
+// specifically should pick up this release's reworked defaults
+// (Phase 9 -- bug fix, fade-in, dynamic shower intensity, accent drop;
+// see HANDOFF.md) wherever it's currently in use, since delivering that
+// improvement is the whole point of shipping it. Refreshes BOTH the
+// live/current keyboard state AND any saved preset using the "rain"
+// effect -- not just the live one -- since a preset saved before this
+// rework would otherwise stay stuck on the old, buggier defaults
+// forever. Invoked via `JmaStudio.Service.exe --migrate-rain-defaults
+// <dataDir>` from JmaStudio.iss's CurStepChanged, on every install
+// (fresh or upgrade) -- a harmless no-op if rain isn't in use anywhere,
+// and does not touch any other effect or preset.
+static int MigrateRainDefaults(string dataDir)
+{
+    if (string.IsNullOrWhiteSpace(dataDir) || !Directory.Exists(dataDir))
+    {
+        Console.WriteLine($"MigrateRainDefaults: data dir '{dataDir}' not found, nothing to do.");
+        return 0;
+    }
+
+    var store = new PresetStore(dataDir);
+    var freshRain = new RainParams();
+    int refreshed = 0;
+
+    KeyboardPreset? live = store.LiveKeyboardState.Load();
+    if (live is { Effect: "rain" })
+    {
+        store.LiveKeyboardState.Save(live with { Params = freshRain });
+        refreshed++;
+        Console.WriteLine("MigrateRainDefaults: refreshed live keyboard state (effect=rain).");
+    }
+
+    Dictionary<string, KeyboardPreset> presets = store.KeyboardPresets.Load();
+    bool presetsChanged = false;
+    foreach (string name in presets.Keys.ToList())
+    {
+        if (presets[name].Effect == "rain")
+        {
+            presets[name] = presets[name] with { Params = freshRain };
+            presetsChanged = true;
+            refreshed++;
+            Console.WriteLine($"MigrateRainDefaults: refreshed preset '{name}' (effect=rain).");
+        }
+    }
+    if (presetsChanged) store.KeyboardPresets.Save(presets);
+
+    Console.WriteLine($"MigrateRainDefaults: done, {refreshed} item(s) refreshed.");
+    return 0;
 }
