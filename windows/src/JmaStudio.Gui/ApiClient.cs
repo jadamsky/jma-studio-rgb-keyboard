@@ -278,6 +278,37 @@ public sealed class ApiClient
     public async Task<ControllerReactiveDefaultsResponse?> GetControllerReactiveDefaultsAsync() =>
         await _http.GetFromJsonAsync<ControllerReactiveDefaultsResponse>("/controller-reactive/defaults", Json);
 
+    // ---- idle screensaver (Phase 8, V2) ----
+
+    /// <summary>Pinged by IdleActivityMonitor only when it detects NEW
+    /// keyboard/mouse input since its last check -- swallows connection
+    /// failures the same way ShutdownServiceAsync/PostKeypressAsync do,
+    /// since a missed ping here should never throw.</summary>
+    public async Task<bool> PingIdleActivityAsync()
+    {
+        try
+        {
+            return (await _http.PostAsync("/idle-activity", null)).IsSuccessStatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (TaskCanceledException)
+        {
+            return false;
+        }
+    }
+
+    public async Task<IdleScreensaverConfig?> GetIdleScreensaverConfigAsync() =>
+        await _http.GetFromJsonAsync<IdleScreensaverConfig>("/idle-screensaver/config", Json);
+
+    public async Task<bool> SetIdleScreensaverConfigAsync(IdleScreensaverConfig config)
+    {
+        var response = await _http.PostAsJsonAsync("/idle-screensaver/config", config, Json);
+        return response.IsSuccessStatusCode;
+    }
+
     // ---- diagnostics ----
 
     public async Task<DiagnosticsStatusResponse?> GetDiagnosticsStatusAsync() =>

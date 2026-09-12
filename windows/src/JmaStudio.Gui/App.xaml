@@ -313,5 +313,38 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- First real ListBox use in the app was Phase 8's idle
+             screensaver playlist. Confirmed live: WPF's default
+             ListBoxItem template doesn't inherit the window's Foreground
+             either (same underlying issue the ComboBox/CheckBox styles
+             above were already fixed for), rendering near-black text on
+             this app's dark background. Mirrors ComboBoxItem's own
+             hover/selected pattern above rather than inventing a new one. -->
+        <Style TargetType="ListBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bd" Background="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverOverlayBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentBBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Application.Resources>
 </Application>

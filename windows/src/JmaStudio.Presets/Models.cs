@@ -53,6 +53,43 @@ public sealed record LightbarReactiveConfig
     public RgbColor AllFlashColor { get; init; }
 }
 
+/// <summary>Phase 8 (V2) idle screensaver config -- when no keyboard,
+/// mouse, or controller input has been seen for IdleThresholdMinutes,
+/// the keyboard cycles through KeyboardPresetNames (a playlist, not a
+/// single fixed effect) and, if LightbarPresetName is set, the lightbar
+/// switches to that one preset for the duration (never a cycling
+/// playlist for the lightbar -- confirmed by the user). Whatever was
+/// running before is restored the instant real input resumes. See
+/// IdleScreensaverManager (JmaStudio.Service) for the actual logic.</summary>
+public sealed record IdleScreensaverConfig
+{
+    public bool Enabled { get; init; }
+    public double IdleThresholdMinutes { get; init; } = 5.0;
+    public IReadOnlyList<string> KeyboardPresetNames { get; init; } = Array.Empty<string>();
+    public int CycleIntervalSeconds { get; init; } = 30;
+    public bool RandomOrder { get; init; }
+    /// <summary>Null/empty means "don't touch the lightbar at all while
+    /// the screensaver is active" -- one of the three options the user
+    /// asked for (a built-in effect, a solid color, or nothing at all)
+    /// is satisfied by picking an existing lightbar preset (which can
+    /// itself represent any of those), or leaving this unset.</summary>
+    public string? LightbarPresetName { get; init; }
+}
+
+/// <summary>Reserved sentinel value usable as a KeyboardPresetNames
+/// playlist entry OR as LightbarPresetName -- means "turn this off"
+/// rather than "apply a named preset." Shared between JmaStudio.Gui
+/// (populates the picker lists with it) and JmaStudio.Service
+/// (IdleScreensaverManager special-cases it instead of doing a preset
+/// lookup) so both sides agree on the exact string. Not a real preset
+/// name -- treated as reserved even in the unlikely case a user names an
+/// actual preset identically, same as the GUI's own "(None...)" combo
+/// option isn't a real preset either.</summary>
+public static class IdleScreensaverSentinels
+{
+    public const string LightsOut = "(Lights Out)";
+}
+
 /// <summary>A saved lightbar preset -- last-commanded lightbar state
 /// plus (optionally) a bundled reactive-settings snapshot. `Reactive`
 /// is nullable because older presets (see "BLUE" in the real

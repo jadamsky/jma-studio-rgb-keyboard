@@ -389,6 +389,29 @@ public static class Endpoints
         });
     }
 
+    /// <summary>Phase 8 (V2) idle screensaver. POST /idle-activity is
+    /// pinged by JmaStudio.Gui's IdleActivityMonitor (GetLastInputInfo
+    /// polling) only when it detects NEW keyboard/mouse input since its
+    /// last check -- not a constant heartbeat, to stay cheap. GET/POST
+    /// /idle-screensaver/config mirrors /lightbar/reactive's existing
+    /// GET/POST shape.</summary>
+    public static void MapIdleScreensaver(WebApplication app, IdleScreensaverManager manager, PresetStore store)
+    {
+        app.MapPost("/idle-activity", () =>
+        {
+            manager.RecordExternalActivity();
+            return Results.Ok();
+        });
+
+        app.MapGet("/idle-screensaver/config", () => Results.Ok(store.IdleScreensaverConfig.Load()));
+
+        app.MapPost("/idle-screensaver/config", (IdleScreensaverConfig config) =>
+        {
+            store.IdleScreensaverConfig.Save(config);
+            return Results.Ok();
+        });
+    }
+
     /// <summary>Tray icon's "Close and End Service" (JmaStudio.Gui's
     /// TrayIconManager). The GUI runs unelevated and the Service runs
     /// elevated, so a graceful self-shutdown over HTTP is the only

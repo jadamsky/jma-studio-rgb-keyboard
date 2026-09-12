@@ -149,6 +149,15 @@ var lightbarReactiveManager = new LightbarReactiveManager(
     LoggerFactory.Create(b => { b.AddConsole(); b.AddProvider(fileLoggerProvider); }).CreateLogger<LightbarReactiveManager>());
 builder.Services.AddSingleton<IHostedService>(lightbarReactiveManager);
 
+// Phase 8 (V2) idle screensaver -- same "construct directly, register as
+// IHostedService, also hand to Endpoints" pattern as lightbarReactiveManager
+// above, since Endpoints.MapIdleScreensaver needs the same instance for
+// RecordExternalActivity().
+var idleScreensaverManager = new IdleScreensaverManager(
+    daemonState, lightbarController, presetStore, controller,
+    LoggerFactory.Create(b => { b.AddConsole(); b.AddProvider(fileLoggerProvider); }).CreateLogger<IdleScreensaverManager>());
+builder.Services.AddSingleton<IHostedService>(idleScreensaverManager);
+
 var diagnosticsManager = new DiagnosticsManager(
     lightbarController, daemonState, keyboard, controller, selfTestGate,
     pythonRepoRoot, serviceStartedAtUtc, logFilePath);
@@ -175,6 +184,7 @@ Endpoints.MapLayout(app, keymapPath);
 Endpoints.MapDiagnostics(app, diagnosticsManager, controller, logFilePath);
 Endpoints.MapSystem(app);
 Endpoints.MapInput(app, inputListener);
+Endpoints.MapIdleScreensaver(app, idleScreensaverManager, presetStore);
 
 // Loopback-only, same port the Python daemon used -- no auth either
 // way, trusted purely by being on 127.0.0.1, matching daemon/server.py.

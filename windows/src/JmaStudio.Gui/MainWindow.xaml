@@ -24,7 +24,18 @@
                     <Ellipse x:Name="HwStatusDot" Width="10" Height="10" Fill="Gray" Margin="0,0,6,0" VerticalAlignment="Center"/>
                     <TextBlock x:Name="HwStatusLabel" Text="checking..." VerticalAlignment="Center" Margin="0,0,16,0" Foreground="{StaticResource SubTextBrush}"/>
                     <Button x:Name="LightbarBtn" Content="Lightbar" Style="{StaticResource BtnGhost}" Click="LightbarBtn_Click"/>
-                    <Button x:Name="ControllerReactiveBtn" Content="Controller Reactive" Style="{StaticResource BtnGhost}" Click="ControllerReactiveBtn_Click"/>
+                    <Button x:Name="ControllerReactiveBtn" Style="{StaticResource BtnGhost}" Click="ControllerReactiveBtn_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Controller Reactive"/>
+                            <TextBlock x:Name="ControllerReactiveEnabledCheck" Text=" &#x2713;" Foreground="{StaticResource SuccessBrush}" FontWeight="Bold" Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="IdleScreensaverBtn" Style="{StaticResource BtnGhost}" Click="IdleScreensaverBtn_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Screensaver"/>
+                            <TextBlock x:Name="IdleScreensaverEnabledCheck" Text=" &#x2713;" Foreground="{StaticResource SuccessBrush}" FontWeight="Bold" Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Button>
                     <Button x:Name="DiagnosticsBtn" Content="Diagnostics" Style="{StaticResource BtnGhost}" Click="DiagnosticsBtn_Click"/>
                     <Button x:Name="OffBtn" Content="Off" Style="{StaticResource BtnGhost}" Click="OffBtn_Click"/>
                 </StackPanel>

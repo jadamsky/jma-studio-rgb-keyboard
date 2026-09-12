@@ -51,6 +51,10 @@ public sealed class PresetStore
     public JsonStore<KeyboardPreset?> LiveKeyboardState { get; }
     public JsonStore<LightbarState?> LiveLightbarState { get; }
 
+    /// <summary>Phase 8 (V2) idle screensaver config -- see
+    /// IdleScreensaverConfig's own doc comment.</summary>
+    public JsonStore<IdleScreensaverConfig> IdleScreensaverConfig { get; }
+
     public PresetStore(string directory)
     {
         KeyboardPresets = new JsonStore<Dictionary<string, KeyboardPreset>>(
@@ -67,5 +71,7 @@ public sealed class PresetStore
             Path.Combine(directory, "live-keyboard-state.json"), () => null);
         LiveLightbarState = new JsonStore<LightbarState?>(
             Path.Combine(directory, "live-lightbar-state.json"), () => null);
+        IdleScreensaverConfig = new JsonStore<IdleScreensaverConfig>(
+            Path.Combine(directory, "idle-screensaver-config.json"), () => new());
     }
 }
