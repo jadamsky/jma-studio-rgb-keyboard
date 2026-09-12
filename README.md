@@ -33,10 +33,13 @@ starts your lighting before you even log in, plus a native WPF GUI and
 tray icon, all wrapped in a real one-click **installer**.
 
 **If you don't want to fiddle with a Python environment, grab the
-latest `JmaStudio-Setup.exe` from
+latest `JmaStudio-Setup-V2.exe` from
 [Releases](../../releases/latest)** — it's a self-contained installer:
 one UAC prompt, a desktop shortcut, and it's running. No Python, no
-`pip install`, no virtual environment.
+`pip install`, no virtual environment. Already have V1 installed? Just
+run the new installer over it — it detects the existing install and
+asks whether to upgrade in place (keeping your presets and settings) or
+do a clean reinstall.
 
 See [`windows/HANDOFF.md`](windows/HANDOFF.md) for the C# port's full
 architecture, build history, and how to build the installer yourself
@@ -44,6 +47,37 @@ from source (`windows/installer/build.ps1`) instead of using a prebuilt
 release. Everything below this point documents the original **Python**
 version, still fully supported and the reference implementation the C#
 port was built from.
+
+### What's new in V2 (C# port only)
+
+- **Idle screensaver** — after a configurable period with no keyboard,
+  mouse, *or controller* input, the keyboard cycles through a playlist
+  of your own presets (optionally in random order), and can switch the
+  lightbar to a fixed look for as long as you're away. Snaps back
+  instantly the moment you touch anything.
+- **Low-battery lighting override** — when you're unplugged and battery
+  drops below a threshold you set, the keyboard and lightbar switch to
+  their own configurable warning colors until you plug back in — with
+  independent color and brightness for each. Takes priority over the
+  screensaver if both would otherwise apply.
+- **A hardcoded plug/unplug indicator** — the whole keyboard fades
+  through two quick red blinks when you unplug the charger, and two
+  green blinks when you plug it back in, then returns to whatever was
+  showing. Always on, not a setting.
+- **Controller hot-discovery, now including Bluetooth** — a new
+  "Discover" button finds and connects a DualSense controller over USB
+  *or* Bluetooth at any time, fixing a real bug where plugging in the
+  controller after the app was already running never worked. Bluetooth
+  required reverse-engineering the controller's own low-level report
+  format, including how to unlock its full button data (paddles/Fn
+  buttons on a DualSense Edge specifically needed this). L3/R3 (stick
+  clicks) are now wired up too, on both transports.
+- **Installer improvements** — upgrading over an existing install no
+  longer risks clobbering a running copy; a new Clean Install option
+  fully removes the old install first (still asking separately whether
+  to keep your presets); the "rain" effect's improved defaults reach
+  existing installs automatically; and the installer/app are now
+  code-signed.
 
 ## What it does
 
