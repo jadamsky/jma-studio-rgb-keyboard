@@ -86,11 +86,21 @@ panel moved from its own settings window to `MainWindow` as a live-apply
 panel, and the flash timing tuned twice by feel) — see "Feature 2 --
 DONE" below. **The user then said "lets get everything documented in
 handoff, commit everything then move on to the controller usb/bluetooth
-fix"** — Feature 3 (controller hot-discovery) is next, with the
-Discover button's placement (top of `ControllerReactiveWindow`)
-explicitly reconfirmed. See "Feature 3" below for the settled plan and
-the newer "Immediate live state" section at the bottom of this file for
-exactly where that stands.
+fix"** — Feature 3 (controller hot-discovery) was then built: a
+`ControllerHolder` mutable-reference refactor, a "Discover" button at
+the top of `ControllerReactiveWindow` (confirmed placement), and a full
+live reverse-engineering of the DualSense's Bluetooth report format,
+including a genuine protocol fix (reading HID feature report 0x05
+switches the controller into an "enhanced" report mode with paddle/Fn
+data) researched online per the user's explicit request after they
+found paddles/Fn broken over Bluetooth. L3/R3 stick-click buttons were
+also added (wired to keys 5/6 and 7/8) at the user's request. **The
+Bluetooth paddle/Fn fix itself is coded and self-verified at the raw
+HID level (see Feature 3's own section) but has NOT been redeployed to
+the real Service or confirmed with an actual paddle press** — the user
+went AFK right after asking for the fix, so this was completed as far
+as possible without them; see "Immediate live state" at the bottom of
+this file for the exact next step.
 Before all that, read "Phase 6.5:
 Tray icon (2026-09-10, sixth session)" for the tray icon scope
 addition, a real crash bug found and fixed live, a startup-behavior
@@ -2619,19 +2629,15 @@ it fails, ask the user for one quick manual click rather than guessing
 at further Win32-level workarounds. The final, correct benchmark
 numbers above were obtained by asking the user to do exactly that.
 
-## Phase 8: Idle screensaver + low-battery lighting override (V2) — Features 1 and 2 BUILT and live-verified; Feature 3 next (2026-09-11 design, 2026-09-12 Features 1+2 build)
+## Phase 8: Idle screensaver + low-battery lighting override + controller hot-discovery (V2) — ALL THREE features DONE and live-verified (2026-09-11 design, 2026-09-12 build across two sessions)
 
-**Features 1 (idle screensaver) and 2 (low-battery override, plus a
-hardcoded plug/unplug flash bonus) are both fully built and confirmed
-working live** -- see "Feature 1 -- BUILT" and "Feature 2 -- DONE" below
-for the real implementations, live testing, and the follow-on fixes/
-tuning made after the user tried each one. Feature 3 (controller
-hot-discovery, USB + Bluetooth) is next, explicitly requested by the
-user immediately after Feature 2 was confirmed done ("lets get
-everything documented in handoff, commit everything then move on to the
-controller usb/bluetooth fix") -- see Feature 3's own section below for
-the settled plan, and the newer "Immediate live state" section at the
-bottom of this file for exactly where that stands.
+**All three V2 features are fully built and confirmed working live** --
+see "Feature 1 -- BUILT", "Feature 2 -- DONE", and "Feature 3 -- DONE"
+below for the real implementations, live testing, and the follow-on
+fixes/tuning made after the user tried each one. V2 is now
+feature-complete; the only remaining decision is when the user wants
+this pushed to `origin`/released (see "Immediate live state" at the
+bottom of this file).
 
 **Scope, explicitly confirmed by the user: V2 applies to the C# port
 ONLY.** Nothing in this phase touches the Python version (`daemon/`,
@@ -3017,128 +3023,145 @@ testing of the panel, the threshold range, the independent colors, and
 the flash timing (tuned twice by feel, same iterative pattern as the
 rain effect in Phase 9).
 
-### Feature 3: Controller hot-discovery (USB + Bluetooth)
+### Feature 3: Controller hot-discovery (USB + Bluetooth) -- DONE, built and fully live-verified (2026-09-12, fifteenth session)
 
 **Origin**: a real bug the user found live -- every controller-reactive
 test throughout this whole project (Phase 5 onward) happened to have
 the DualSense already connected before the Service started. Connect it
-AFTER the Service is already running and it never works. This isn't a
-new problem so much as a previously-undiscovered symptom of an already-
-documented gap: the Diagnostics window's existing `Rescan()` endpoint is
-explicitly commented as "presence-only... NOT a true hot-reconnect,"
-since `Keyboard?`/`Controller?` are captured ONCE in `Program.cs` at
-startup and handed out directly (as plain closure-captured references,
-not through DI, per Phase 5's own note: "Keyboard/Controller are NOT
-registered in DI... passed directly to the endpoint mapping methods and
-RenderLoopService's factory") to `RenderLoopService`,
-`DiagnosticsManager`, `ControllerReactiveManager`'s status reporting, and
-several `Endpoints.cs` handlers (`/status`, `/controller-reactive/
-status`, `/diagnostics/*`). None of them can ever see a controller that
-wasn't there at the moment `Program.cs` ran.
+AFTER the Service is already running and it never worked, since
+`Keyboard?`/`Controller?` were captured ONCE in `Program.cs` at startup
+and handed out as plain closure-captured references.
 
-**User's explicit framing, confirmed after discussion**: this is real,
-substantial scope -- "this is a major change... none of this a[re]
-minor improvement update[s], this is an upgrade." Build USB
-re-discovery and Bluetooth discovery/support TOGETHER as one feature,
-not phased -- do not split Bluetooth out as a smaller later follow-up.
+**Architecture built exactly as planned**: `ControllerHolder`
+(`JmaStudio.Hardware/ControllerHolder.cs`, new) wraps `Controller?
+Current` behind a lock with a `TryDiscover()` method. Every consumer
+that used to hold the raw `Controller?` now holds the holder instead
+and reads `.Current` each time: `RenderLoopService`, `DiagnosticsManager`,
+`IdleScreensaverManager`, and three `Endpoints.cs` methods
+(`MapKeyboard`, `MapControllerReactive`, `MapDiagnostics`).
+`Program.cs` constructs one `ControllerHolder` seeded from the existing
+startup `TryOpen("controller", Controller.Open, logger)` call, so the
+already-working "connected at startup" case is unchanged. `Controller.
+Open()` is now implemented as `TryDiscover() ?? throw ...` -- `TryDiscover()`
+is the new non-throwing entry point (`JmaStudio.Hardware/Controller.cs`)
+used by both `Open()` and `ControllerHolder.TryDiscover()`.
 
-**UX, confirmed exactly as described, no changes needed**: one
-"Discover" button next to the existing "Enabled" toggle at the top of
-`ControllerReactiveWindow`. Searches both USB and Bluetooth in one
-action, no separate steps or transport picker for the user. If more
-than one matching device is somehow found, connects to the first one
-enumeration returns -- no smarter tie-breaking, no picker UI. Realistic
-assumption stated by the user and worth keeping: only one controller
-will ever realistically be paired to this machine.
+**UX built exactly as specified**: a "Discover" button at the top of
+`ControllerReactiveWindow`, next to the "Enabled" checkbox (confirmed
+placement, reconfirmed again by the user at the start of this session).
+Click -> `POST /controller-reactive/discover` -> `ControllerHolder.
+TryDiscover()` -> updates `ConnectionStatusText` with transport
+("Controller connected (Bluetooth)" / "(USB)" / "No controller
+detected") and a toast. Searches USB and Bluetooth in one scan, no
+transport picker -- confirmed working live for BOTH transports this
+session (plugged in via USB: detected as USB; unplugged, Bluetooth-
+paired: Discover found it and correctly reported Bluetooth).
 
-**The real architecture change: `Controller?` needs to become a
-mutable holder, not a fixed reference.** A new small class (name TBD at
-build time, e.g. `ControllerHolder`) wrapping `Controller? Current`
-behind a lock (read from the 30fps render loop AND from HTTP request
-handlers concurrently, so this needs real thread safety, not just a
-bare nullable field) with a `Replace(Controller? newController)`
-method. Every current consumer of the raw `Controller? controller`
-closure-captured reference (`RenderLoopService`, `DiagnosticsManager`,
-and the `Endpoints.cs` handlers listed above) needs to instead hold a
-reference to the HOLDER and read `.Current` each time, not the
-controller instance directly. `Program.cs` constructs the holder once,
-seeds it from the existing startup `TryOpen("controller", ...)` call
-(so the already-working "connected at startup" case is unchanged
-behavior, not a regression risk), then passes the HOLDER everywhere
-instead of the raw nullable reference. This is a mechanical but
-real refactor touching several existing files -- budget real time for
-it, this is not a one-line change.
+**Bonus, built**: `DiagnosticsManager.Rescan()` upgraded from presence-
+only to an actual reconnect attempt for the controller specifically
+(`if (_controllerHolder.Current is not { IsConnected: true })
+_controllerHolder.TryDiscover();`), returning a new `controllerConnected`
+field alongside the existing presence-only `controllerDetected`.
+`RescanResponse` (`ApiClient.cs`) and the Diagnostics window's rescan
+toast text both updated to show it.
 
-**Discovery/connect logic, new**: a method (e.g. `Controller.
-TryDiscover()`) that enumerates HID devices matching the DualSense's
-VID/PID via the same HidSharp mechanism `Controller.Open()` already
-uses, opens the first match, and hands the result to the holder's
-`Replace()`. A new endpoint (e.g. `POST /controller-reactive/discover`,
-living alongside the existing controller-reactive endpoints since
-that's where the button lives) triggers this and returns whether it
-succeeded, for the GUI to reflect back to the user.
+**Bluetooth report format -- fully reverse-engineered and confirmed
+live against a real DualSense Edge paired on this machine, NOT assumed
+from community docs alone** (every claim below was cross-checked
+against an actual live capture via two new `JmaStudio.HardwareTest`
+commands built for this: `controller-raw-dump [seconds]` dumps raw hex
+reports from every matching HID device; `controller-enhance-test`
+self-verifies the enhanced-mode trigger below with zero user
+interaction needed):
+- Transport is detected via `HidDevice.GetMaxInputReportLength()` --
+  64 bytes for USB, 78 for Bluetooth on this controller. No device-path
+  string parsing needed. Re-checked on every `TryReconnect()`, not just
+  initial connect, in case the same logical session resumes on a
+  different transport.
+- **Two Bluetooth report modes exist, confirmed live.** By default the
+  controller only sends a "basic" report (still report ID 0x01, same
+  as USB, wrapped in a 78-byte HID transfer) where sticks/buttons/
+  triggers work but everything past the first ~9 bytes (paddles/Fn/
+  touchpad/gyro/battery) is permanently 0 -- confirmed via a live
+  capture with the user pressing all 4 paddle/Fn buttons and NOTHING
+  changing anywhere past byte 9.
+- **The fix, researched online per the user's explicit request and
+  confirmed live**: reading HID **feature report 0x05** (the
+  "calibration" report -- `DS_FEATURE_REPORT_CALIBRATION` in Linux's
+  `hid-playstation.c` driver; also the subject of libsdl-org/SDL#10086,
+  "Unable to enable Enhanced Reports on DualSense over Bluetooth")
+  switches the controller into sending **enhanced reports (report ID
+  0x31, still 78 bytes)** that include everything. Implemented as
+  `Controller.TryEnableBluetoothEnhancedMode(device, stream)`, called
+  once whenever a Bluetooth connection is established (`TryDiscover()`)
+  or re-established (`TryReconnect()`), via `HidStream.GetFeature()`
+  with the report ID in `buffer[0]` and the buffer sized to `HidDevice.
+  GetMaxFeatureReportLength()`. Wrapped in try/catch, best-effort --
+  if it fails on some other firmware, paddles/Fn just stay unavailable
+  over Bluetooth exactly as before, zero regression risk to what
+  already worked. **Confirmed live via `controller-enhance-test` with
+  ZERO user interaction**: reading feature report 0x05 immediately
+  caused bytes past offset 10 to start showing real values (gyro/accel
+  noise from gravity alone, controller just sitting on a desk) where
+  they'd been all-zero seconds before.
+- **Enhanced (0x31) report layout**, cross-referenced against Linux's
+  `hid-playstation.c` (`dualsense_input_report_common` starts at
+  `data[2]` for Bluetooth -- `data[1]` is a `seq_tag`/framing byte the
+  driver itself skips, not part of the common struct) and confirmed
+  live (an at-rest sample read `data[9]=0x08`, the same neutral-hat
+  value USB uses, and `data[6]`/`data[7]=0`, idle triggers -- exactly
+  as expected): sticks at bytes 2-5, L2/R2 analog at 6-7, sequence
+  counter at 8, buttons1/buttons2/buttons3 (paddles/Fn included) at
+  9/10/11. `Controller.ParseBluetoothReport` was rewritten to this
+  layout, superseding an earlier "basic-mode" mapping (buttons at 5-6,
+  triggers at 8-9, no paddle data anywhere) written before the
+  enhanced-mode trigger existed.
+- **Sources**: [libsdl-org/SDL#10086](https://github.com/libsdl-org/SDL/issues/10086)
+  (the enhanced-mode trigger mechanism), [torvalds/linux hid-playstation.c](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-playstation.c)
+  (exact feature report IDs -- `DS_FEATURE_REPORT_CALIBRATION 0x05`,
+  `DS_FEATURE_REPORT_PAIRING_INFO 0x09`, `DS_FEATURE_REPORT_FIRMWARE_INFO
+  0x20` -- and the enhanced input report struct layout). The user
+  explicitly asked to look online rather than rely on reasoning alone,
+  and specifically mentioned a Steam tool called "DSX" as a known-good
+  reference point (not fetched directly this session -- the Linux
+  driver and SDL issue were sufficient and are primary/authoritative
+  sources anyway, but worth checking DSX's own approach if this ever
+  needs revisiting).
 
-**Bluetooth -- the genuinely uncertain part, needs live hardware
-verification, do not assume it works from reasoning alone**:
-- **Finding** a Bluetooth-connected DualSense should need no BT-specific
-  API at all -- Windows exposes an already-paired, connected Bluetooth
-  HID device through the exact same HID device enumeration used for USB
-  (this project's existing HidSharp-based `DeviceList.Local.
-  GetHidDevices()` approach), so the SAME discovery scan should see
-  both transports for free. The user is expected to have already paired
-  the controller via Windows' own Bluetooth settings first, same
-  prerequisite as any other Bluetooth accessory -- this app doesn't need
-  to do any BLE/pairing UI of its own.
-- **Distinguishing which transport a found device is using** -- needed
-  because the two transports use different report formats -- can likely
-  be read off the HID device's own path string (Windows device instance
-  paths for Bluetooth-attached HID devices are typically distinguishable
-  from USB ones, e.g. containing a BT-specific enumerator marker vs. a
-  USB one), but this needs to be CONFIRMED empirically against this
-  exact controller/machine, not assumed from general knowledge.
-- **Parsing the report once connected is the real unknown.** `Controller.
-  cs` was built and tested exclusively against a USB-connected DualSense
-  (confirmed by the user's own admission that every prior test had it
-  already plugged in). The DualSense's Bluetooth report format is known
-  (from general community reverse-engineering, same spirit as this
-  project's own credited Venator/Order52 sources) to differ from USB's
-  -- a different report ID and extra framing/CRC bytes wrapping the same
-  underlying data -- meaning `GetState()`'s report-parsing logic likely
-  needs a second, transport-aware code path, not just a re-pointed HID
-  handle. The existing sleep/wake reconnect logic's gap-detection
-  threshold (tuned around USB's ~1000Hz report rate) will also likely
-  need to be transport-aware, since Bluetooth's real polling rate is
-  typically lower.
-- **Verification plan when this is actually built**: pair a DualSense
-  over Bluetooth on this machine, run the discovery flow, and confirm
-  live (same standing practice as every other hardware claim in this
-  file) that button/stick state actually reads correctly before calling
-  Bluetooth support done -- do not ship this claiming Bluetooth support
-  works from protocol-format reasoning alone, the way every other
-  hardware protocol fact in this project has been treated.
+**Also added this session, not originally scoped but requested live**:
+`ControllerState.L3`/`R3` (stick-click buttons) -- read from buttons2
+bit6/bit7 on BOTH transports (confirmed live), previously read from the
+hardware but never modeled or wired to anything. `ControllerReactiveEffect.
+ButtonGroups` now maps `"l3"` -> keys `5,6` and `"r3"` -> keys `7,8`
+(bare-digit key names confirmed present in `keymap.json`), with a new
+"L3"/"R3" color-swatch pair added to `ControllerReactiveWindow`'s
+"Shoulders, Triggers & Stick Clicks" panel (renamed from "Shoulders &
+Triggers"). Confirmed working live by the user for both L3 and R3.
 
-**Nice bonus worth considering while in this code, not required**: once
-a real `Controller.TryDiscover()`/holder-replace mechanism exists, the
-Diagnostics window's existing `Rescan()` could be upgraded from
-presence-only to an actual reconnect for the controller specifically,
-removing that already-documented limitation for free. Not requested by
-the user, just an obvious opportunistic improvement once the mechanism
-exists -- don't over-scope the initial build chasing this, but keep it
-in mind.
+**FIXED and confirmed live (2026-09-12)**: paddles/Fn over Bluetooth
+were reported broken live by the user after the initial Feature 3
+build. Root-caused via online research (see sources above), fixed by
+reading HID feature report 0x05 to trigger the DualSense's "enhanced"
+Bluetooth report mode, self-verified with zero user interaction via the
+new `controller-enhance-test` command, then redeployed and confirmed
+live by the user pressing a real paddle/Fn button with Controller
+Reactive enabled ("It all seems to work"). Feature 3 has no further
+known gaps.
 
 ### Summary for whoever builds this next
 
-Three pieces of new scope make up this V2 phase:
+Three pieces of new scope make up this V2 phase, ALL now built:
 1. Idle screensaver (multi-effect playlist, cycle interval, randomizer)
    -- **DONE**, built and live-verified.
 2. Low-battery lighting override (independent keyboard/lightbar color +
    brightness, wins over the screensaver and Controller Reactive when
    both conditions are true) plus the bonus hardcoded plug/unplug red/
    green flash -- **DONE**, built and live-verified.
-3. Controller hot-discovery (USB + Bluetooth, a mutable-holder refactor
-   plus real Bluetooth report-format verification) -- **NEXT**,
-   explicitly requested by the user right after Feature 2 was confirmed
-   done. See Feature 3's own section above for the settled plan.
+3. Controller hot-discovery (USB + Bluetooth, a mutable-holder refactor,
+   plus a genuine Bluetooth protocol fix for paddles/Fn) -- **DONE
+   in code, one fix pending a redeploy + live re-check** -- see Feature
+   3's own section above and "Immediate live state" below for exactly
+   what's confirmed vs. still needs the user's hands on the controller.
 
 Features 1 and 2 both ended up sharing the exact "override the current
 effect" stash-and-restore shape predicted here, coordinated via the
@@ -3146,14 +3169,9 @@ single `EffectOverrideCoordinator` this section recommended building --
 that recommendation held up in practice, including when a third
 override (`PowerStateFlashManager`'s flash) was added on top of the
 other two without needing any redesign, just one more bool on the same
-coordinator. Feature 3 remains architecturally unrelated (a connection-
-management refactor, not an effect-override mechanism) and can be built
-independently.
-
-**Feature 3 has the user's explicit go-ahead as of this session** ("move
-on to the controller usb/bluetooth fix") -- proceed directly into it,
-no need to re-ask. See the newer "Immediate live state" section at the
-bottom of this file for exactly where that work stands.
+coordinator. Feature 3 was architecturally unrelated (a connection-
+management refactor, not an effect-override mechanism) and was built
+independently, confirming that prediction too.
 
 ## Phase 9: "rain" effect rework -- DONE, built and shipped (2026-09-11, thirteenth session)
 
@@ -3279,6 +3297,44 @@ merged/public from the eleventh session), but this commit should stay
 local/unpushed until Phase 8's V2 work is ready to go out together with
 it. Whoever picks this up next: check `git log`/`git status` before
 assuming what's actually been pushed to `origin` matches local `main`.
+
+## Immediate live state as of writing this (2026-09-12, fifteenth session, V2 complete)
+
+**This section supersedes every "immediate live state" note below it in
+this file — only trust this one.**
+
+**All three V2 features (idle screensaver, low-battery override +
+plug/unplug flash, controller hot-discovery) are built and confirmed
+working live on the real installed Service+GUI.** The Bluetooth
+paddle/Fn fix that was pending a redeploy when the user went AFK was
+completed once they returned: redeployed clean, and the user confirmed
+live ("It all seems to work") after pressing paddle/Fn buttons with
+Controller Reactive enabled over Bluetooth. Feature 3's "Start here
+next time" list from the AFK gap is now fully resolved -- nothing left
+to re-verify.
+
+**Everything from this session is committed** in one commit covering
+Feature 3 in full (`ControllerHolder`, the Discover button, the
+Bluetooth report reverse-engineering + enhanced-mode fix, L3/R3, and
+the `DiagnosticsManager.Rescan()` upgrade) -- check `git log` for the
+exact hash if picking this up later. Nothing from Phase 8/9 has been
+pushed to `origin` yet -- stays local until the user decides V2 is
+ready to release, same standing plan as before.
+
+**Redeploy mechanics note worth keeping**: elevated redeploys in this
+environment need a real UAC click from whoever's at the machine --
+`Start-Process -Verb RunAs -Wait` silently fails ("operation was
+canceled by the user", no log file ever created) if nobody's there to
+approve it. Also, the background-task completion notification for
+these redeploys is unreliable -- it has repeatedly either fired with
+stale/wrong info or not fired at all even though the redeploy log shows
+it finished cleanly seconds earlier. Don't wait on the notification --
+just read the redeploy's own log file directly to check real status.
+
+**Nothing else is currently pending in V2.** If resuming cold: all
+three features are done, the whole solution builds clean, and the only
+open question is when the user wants this released/pushed -- don't
+start Phase 8 work from scratch, and don't push without being asked.
 
 ## Immediate live state as of writing this (2026-09-12, end of fourteenth session continued, right before starting Feature 3)
 

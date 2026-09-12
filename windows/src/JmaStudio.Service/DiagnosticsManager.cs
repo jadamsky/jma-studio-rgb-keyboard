@@ -42,20 +42,20 @@ public sealed class DiagnosticsManager
     private readonly LightbarController _lightbar;
     private readonly DaemonState _daemon;
     private readonly Keyboard? _keyboard;
-    private readonly Controller? _controller;
+    private readonly ControllerHolder _controllerHolder;
     private readonly SelfTestGate _gate;
     private readonly string _pythonRepoRoot;
     private readonly DateTime _startedAtUtc;
     private readonly string _logFilePath;
 
     public DiagnosticsManager(
-        LightbarController lightbar, DaemonState daemon, Keyboard? keyboard, Controller? controller,
+        LightbarController lightbar, DaemonState daemon, Keyboard? keyboard, ControllerHolder controllerHolder,
         SelfTestGate gate, string pythonRepoRoot, DateTime startedAtUtc, string logFilePath)
     {
         _lightbar = lightbar;
         _daemon = daemon;
         _keyboard = keyboard;
-        _controller = controller;
+        _controllerHolder = controllerHolder;
         _gate = gate;
         _pythonRepoRoot = pythonRepoRoot;
         _startedAtUtc = startedAtUtc;
@@ -90,7 +90,7 @@ public sealed class DiagnosticsManager
             },
             controller = new
             {
-                connected = _controller?.IsConnected ?? false,
+                connected = _controllerHolder.Current?.IsConnected ?? false,
                 detected = Controller.IsPresent(),
             },
             perf = new
@@ -112,20 +112,31 @@ public sealed class DiagnosticsManager
         };
     }
 
-    /// <summary>Presence-only re-scan -- NOT a true hot reconnect (the
-    /// keyboard/lightbar/controller handles opened at Program.cs startup
-    /// stay whatever they are; rebuilding them live would need those
-    /// locals to live behind a mutable holder, a bigger refactor not
-    /// justified yet). Still a real, honest signal distinct from
-    /// "connected" (was it opened successfully at startup) -- confirms
-    /// whether the device is present RIGHT NOW, useful if a handle has
-    /// gone stale since boot.</summary>
-    public object Rescan() => new
+    /// <summary>Keyboard/lightbar stay presence-only re-scans (the
+    /// handles opened at Program.cs startup aren't behind a mutable
+    /// holder -- rebuilding them live would need the same refactor
+    /// ControllerHolder just did for the controller specifically, not
+    /// justified for those two yet). The controller IS now a true
+    /// reconnect, not just presence-only, per Phase 8 (V2) Feature 3's
+    /// "nice bonus" -- if nothing is currently connected, this attempts
+    /// ControllerHolder.TryDiscover() (same USB-or-Bluetooth scan the
+    /// GUI's "Discover" button uses) so a controller connected after
+    /// the Service started can be picked up from Diagnostics too, not
+    /// just controller-reactive's own Discover button.</summary>
+    public object Rescan()
     {
-        keyboardDetected = Keyboard.FindLightingDevice() is not null,
-        lightbarDetected = Lightbar.IsPresent(),
-        controllerDetected = Controller.IsPresent(),
-    };
+        if (_controllerHolder.Current is not { IsConnected: true })
+        {
+            _controllerHolder.TryDiscover();
+        }
+        return new
+        {
+            keyboardDetected = Keyboard.FindLightingDevice() is not null,
+            lightbarDetected = Lightbar.IsPresent(),
+            controllerDetected = Controller.IsPresent(),
+            controllerConnected = _controllerHolder.Current?.IsConnected ?? false,
+        };
+    }
 
     /// <summary>Brief red/green/blue flash across the whole keyboard.
     /// Gates the render loop (SelfTestGate) for the duration so the two

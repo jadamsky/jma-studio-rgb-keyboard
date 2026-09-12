@@ -93,6 +93,13 @@ catch (Exception ex)
 Keyboard? keyboard = TryOpen("keyboard", Keyboard.Open, logger);
 Lightbar? lightbar = TryOpen("lightbar", Lightbar.Open, logger);
 Controller? controller = TryOpen("controller", Controller.Open, logger);
+// Phase 8 (V2) Feature 3: mutable holder, not the raw nullable reference
+// -- everything below reads .Current instead of closing over `controller`
+// directly, so a later Discover() (GUI button, or DiagnosticsManager.
+// Rescan()) is visible everywhere immediately. Seeded from the same
+// TryOpen() call above, so the already-working "connected at startup"
+// case is unchanged behavior. See ControllerHolder's own header comment.
+var controllerHolder = new ControllerHolder(controller);
 
 var effectRegistry = new EffectRegistry(keymapPath);
 var presetStore = new PresetStore(dataDir);
@@ -132,12 +139,15 @@ builder.Services.AddSingleton(controllerReactiveManager);
 builder.Services.AddSingleton(inputListener);
 var selfTestGate = new SelfTestGate();
 builder.Services.AddSingleton(selfTestGate);
-// Keyboard/Controller are NOT registered in DI -- both can legitimately
-// be null (hardware not present), and nothing resolves them via
-// constructor injection; they're passed directly to the endpoint
-// mapping methods and RenderLoopService's factory below instead.
+// Keyboard is NOT registered in DI -- can legitimately be null (hardware
+// not present), and nothing resolves it via constructor injection; it's
+// passed directly to the endpoint mapping methods and RenderLoopService's
+// factory below instead. controllerHolder IS safe to treat more casually
+// (it's never null itself, only its .Current can be), but is passed
+// directly too for consistency with keyboard/lightbarController's
+// existing "construct once, hand out directly" pattern.
 builder.Services.AddSingleton<IHostedService>(sp => new RenderLoopService(
-    daemonState, effectRegistry, keyboard, inputListener, controller, selfTestGate,
+    daemonState, effectRegistry, keyboard, inputListener, controllerHolder, selfTestGate,
     sp.GetRequiredService<ILogger<RenderLoopService>>()));
 // LightbarReactiveManager is constructed here (not via a DI factory) so
 // the same instance can be both started as a background loop AND handed
@@ -160,7 +170,7 @@ builder.Services.AddSingleton<IHostedService>(lightbarReactiveManager);
 // would otherwise risk fighting over DaemonState.SetEffect().
 var effectOverrideCoordinator = new EffectOverrideCoordinator();
 var idleScreensaverManager = new IdleScreensaverManager(
-    daemonState, lightbarController, presetStore, controller, effectOverrideCoordinator,
+    daemonState, lightbarController, presetStore, controllerHolder, effectOverrideCoordinator,
     LoggerFactory.Create(b => { b.AddConsole(); b.AddProvider(fileLoggerProvider); }).CreateLogger<IdleScreensaverManager>());
 builder.Services.AddSingleton<IHostedService>(idleScreensaverManager);
 var lowBatteryOverrideManager = new LowBatteryOverrideManager(
@@ -176,7 +186,7 @@ var powerStateFlashManager = new PowerStateFlashManager(
 builder.Services.AddSingleton<IHostedService>(powerStateFlashManager);
 
 var diagnosticsManager = new DiagnosticsManager(
-    lightbarController, daemonState, keyboard, controller, selfTestGate,
+    lightbarController, daemonState, keyboard, controllerHolder, selfTestGate,
     pythonRepoRoot, serviceStartedAtUtc, logFilePath);
 
 var app = builder.Build();
@@ -194,11 +204,11 @@ app.Use(async (context, next) =>
     await next();
 });
 
-Endpoints.MapKeyboard(app, daemonState, effectRegistry, presetStore, keyboard, controller);
+Endpoints.MapKeyboard(app, daemonState, effectRegistry, presetStore, keyboard, controllerHolder);
 Endpoints.MapLightbar(app, lightbarController, presetStore, daemonState, lightbarReactiveManager);
-Endpoints.MapControllerReactive(app, controllerReactiveManager, presetStore, controller);
+Endpoints.MapControllerReactive(app, controllerReactiveManager, presetStore, controllerHolder);
 Endpoints.MapLayout(app, keymapPath);
-Endpoints.MapDiagnostics(app, diagnosticsManager, controller, logFilePath);
+Endpoints.MapDiagnostics(app, diagnosticsManager, controllerHolder, logFilePath);
 Endpoints.MapSystem(app);
 Endpoints.MapInput(app, inputListener);
 Endpoints.MapIdleScreensaver(app, idleScreensaverManager, presetStore);

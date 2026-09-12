@@ -49,7 +49,7 @@ public sealed class IdleScreensaverManager : BackgroundService
     private readonly DaemonState _daemonState;
     private readonly LightbarController _lightbar;
     private readonly PresetStore _store;
-    private readonly Controller? _controller;
+    private readonly ControllerHolder _controllerHolder;
     private readonly EffectOverrideCoordinator _coordinator;
     private readonly ILogger<IdleScreensaverManager> _logger;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
@@ -67,13 +67,13 @@ public sealed class IdleScreensaverManager : BackgroundService
     private int _lastPlaylistIndex = -1;
 
     public IdleScreensaverManager(
-        DaemonState daemonState, LightbarController lightbar, PresetStore store, Controller? controller,
+        DaemonState daemonState, LightbarController lightbar, PresetStore store, ControllerHolder controllerHolder,
         EffectOverrideCoordinator coordinator, ILogger<IdleScreensaverManager> logger)
     {
         _daemonState = daemonState;
         _lightbar = lightbar;
         _store = store;
-        _controller = controller;
+        _controllerHolder = controllerHolder;
         _coordinator = coordinator;
         _logger = logger;
         _lastActivityTime = _clock.Elapsed.TotalSeconds;
@@ -131,8 +131,9 @@ public sealed class IdleScreensaverManager : BackgroundService
 
     private void CheckControllerActivity()
     {
-        if (_controller is null) return;
-        ControllerState current = _controller.GetState();
+        Controller? controller = _controllerHolder.Current;
+        if (controller is null) return;
+        ControllerState current = controller.GetState();
         if (_lastControllerState is not null && HasSignificantChange(_lastControllerState, current))
         {
             _lastActivityTime = _clock.Elapsed.TotalSeconds;

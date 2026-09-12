@@ -57,7 +57,7 @@ public partial class DiagnosticsWindow
             RescanResponse? result = await _api.RescanAsync();
             ToastText.Text = result is null
                 ? "Rescan failed."
-                : $"Detected now -- keyboard: {result.KeyboardDetected}, lightbar: {result.LightbarDetected}, controller: {result.ControllerDetected}";
+                : $"Detected now -- keyboard: {result.KeyboardDetected}, lightbar: {result.LightbarDetected}, controller: {result.ControllerDetected} (connected: {result.ControllerConnected})";
         }
         catch (Exception ex)
         {

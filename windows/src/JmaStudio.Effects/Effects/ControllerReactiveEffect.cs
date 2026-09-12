@@ -66,6 +66,10 @@ public sealed class ControllerReactiveEffect : Effect<ControllerReactiveParams>
         ["left_fn"] = new[] { "left_ctrl" },
         ["right_paddle"] = new[] { "right_shift" },
         ["right_fn"] = new[] { "right_ctrl" },
+        // Stick clicks -- added at the user's explicit request (2026-09-12),
+        // previously read from the controller but never wired to anything.
+        ["l3"] = new[] { "5", "6" },
+        ["r3"] = new[] { "7", "8" },
     };
 
     private readonly IReadOnlyDictionary<string, int> _indexByName;
@@ -95,6 +99,8 @@ public sealed class ControllerReactiveEffect : Effect<ControllerReactiveParams>
         "right_paddle" => s.RightPaddle,
         "left_fn" => s.LeftFn,
         "right_fn" => s.RightFn,
+        "l3" => s.L3,
+        "r3" => s.R3,
         _ => false,
     };
 

@@ -27,7 +27,7 @@ public partial class ControllerReactiveWindow : Window
     private static readonly (string Key, string Label)[] DpadGroup =
         { ("dpad_up", "D-Pad Up"), ("dpad_down", "D-Pad Down"), ("dpad_left", "D-Pad Left"), ("dpad_right", "D-Pad Right") };
     private static readonly (string Key, string Label)[] ShouldersGroup =
-        { ("l1", "L1"), ("r1", "R1"), ("l2", "L2 (100%)"), ("r2", "R2 (100%)") };
+        { ("l1", "L1"), ("r1", "R1"), ("l2", "L2 (100%)"), ("r2", "R2 (100%)"), ("l3", "L3 (stick click)"), ("r3", "R3 (stick click)") };
     private static readonly (string Key, string Label)[] PaddlesGroup =
         { ("left_paddle", "Left Paddle"), ("right_paddle", "Right Paddle"), ("left_fn", "Left Fn"), ("right_fn", "Right Fn") };
 
@@ -85,9 +85,7 @@ public partial class ControllerReactiveWindow : Window
             if (status is not null)
             {
                 EnabledCheck.IsChecked = status.Enabled;
-                ConnectionStatusText.Text = status.Connected
-                    ? "Controller connected"
-                    : "No controller detected (USB only for now)";
+                ConnectionStatusText.Text = DescribeConnection(status.Connected, status.Bluetooth);
             }
         }
         catch (Exception ex)
@@ -141,6 +139,36 @@ public partial class ControllerReactiveWindow : Window
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         timer.Tick += (_, _) => { ToastText.Text = ""; timer.Stop(); };
         timer.Start();
+    }
+
+    private static string DescribeConnection(bool connected, bool bluetooth) => connected
+        ? $"Controller connected ({(bluetooth ? "Bluetooth" : "USB")})"
+        : "No controller detected";
+
+    // Phase 8 (V2) Feature 3: one button, searches USB and Bluetooth in
+    // a single scan -- fixes the real bug this feature originated from
+    // (connecting the controller after the Service is already running
+    // previously never worked, since the Service only ever saw whatever
+    // was plugged in at its own startup). See ControllerHolder's own
+    // header comment (JmaStudio.Hardware) for the mechanism.
+    private async void DiscoverBtn_Click(object sender, RoutedEventArgs e)
+    {
+        DiscoverBtn.IsEnabled = false;
+        try
+        {
+            ControllerDiscoverResponse? result = await _api.DiscoverControllerAsync();
+            if (result is null)
+            {
+                ShowToast("Discover failed -- couldn't reach the Service");
+                return;
+            }
+            ConnectionStatusText.Text = DescribeConnection(result.Connected, result.Bluetooth);
+            ShowToast(result.Found ? "Controller found" : "No controller found (USB or Bluetooth)");
+        }
+        finally
+        {
+            DiscoverBtn.IsEnabled = true;
+        }
     }
 
     private void FireLiveUpdate()
