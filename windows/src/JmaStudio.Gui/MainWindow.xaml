@@ -67,6 +67,46 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Low Battery Override, Phase 8 (V2). Moved here from its
+                     own settings window: it wins over Screensaver and
+                     Controller Reactive for control of the keyboard, and is
+                     now a live-apply panel like Gradient/Reactive Typing/
+                     Custom Key Colors below, not a separate Save-button
+                     settings screen. -->
+                <Border Style="{StaticResource Panel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Low Battery Override" Style="{StaticResource PanelHeader}"/>
+                            <CheckBox x:Name="BatteryEnabledCheck" Content="Enabled" HorizontalAlignment="Right" Checked="BatteryOption_Changed" Unchecked="BatteryOption_Changed"/>
+                        </DockPanel>
+                        <TextBlock x:Name="BatteryStatusText" Text="Battery: --" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,8"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,10"
+                                   Text="When unplugged and battery drops to or below this level, overrides the keyboard and lightbar to their own colors below until it's plugged in or charge recovers. This will override the screen saver and Controller Reactive if they are enabled."/>
+                        <DockPanel>
+                            <TextBlock x:Name="BatteryThresholdLabel" Text="15%" Width="70" VerticalAlignment="Center"/>
+                            <Slider x:Name="BatteryThresholdSlider" Minimum="1" Maximum="99" ValueChanged="BatteryThresholdSlider_ValueChanged"/>
+                        </DockPanel>
+                        <WrapPanel Margin="0,14,0,0">
+                            <StackPanel Margin="0,0,24,0">
+                                <TextBlock Text="Keyboard color" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="BatteryKeyboardSwatch"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,0">
+                                <TextBlock x:Name="BatteryKeyboardBrightnessHeader" Text="Keyboard brightness -- 30%" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <Slider x:Name="BatteryKeyboardBrightnessSlider" Width="200" Minimum="5" Maximum="100" ValueChanged="BatteryKeyboardBrightnessSlider_ValueChanged"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,24,0">
+                                <TextBlock Text="Lightbar color" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <local:ColorSwatchButton x:Name="BatteryLightbarSwatch"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock x:Name="BatteryLightbarBrightnessHeader" Text="Lightbar brightness -- 30%" FontSize="11" Foreground="{StaticResource SubTextBrush}" Margin="0,0,0,4"/>
+                                <Slider x:Name="BatteryLightbarBrightnessSlider" Width="200" Minimum="5" Maximum="100" ValueChanged="BatteryLightbarBrightnessSlider_ValueChanged"/>
+                            </StackPanel>
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+
                 <Border Style="{StaticResource Panel}">
                     <StackPanel>
                         <TextBlock Text="Presets" Style="{StaticResource PanelHeader}"/>

@@ -412,6 +412,28 @@ public static class Endpoints
         });
     }
 
+    /// <summary>Phase 8 (V2) low-battery lighting override. GET/POST
+    /// /battery-override/config mirrors /idle-screensaver/config's
+    /// existing GET/POST shape. GET /battery/status is a cheap
+    /// diagnostic reading (current percent + plugged-in state), useful
+    /// independent of this feature.</summary>
+    public static void MapLowBatteryOverride(WebApplication app, PresetStore store)
+    {
+        app.MapGet("/battery-override/config", () => Results.Ok(store.LowBatteryOverrideConfig.Load()));
+
+        app.MapPost("/battery-override/config", (LowBatteryOverrideConfig config) =>
+        {
+            store.LowBatteryOverrideConfig.Save(config);
+            return Results.Ok();
+        });
+
+        app.MapGet("/battery/status", () =>
+        {
+            (bool hasBattery, bool onBattery, int percent) = LowBatteryOverrideManager.GetBatteryStatus();
+            return Results.Ok(new { hasBattery, onBattery, percent });
+        });
+    }
+
     /// <summary>Tray icon's "Close and End Service" (JmaStudio.Gui's
     /// TrayIconManager). The GUI runs unelevated and the Service runs
     /// elevated, so a graceful self-shutdown over HTTP is the only

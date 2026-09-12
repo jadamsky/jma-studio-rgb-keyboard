@@ -90,6 +90,26 @@ public static class IdleScreensaverSentinels
     public const string LightsOut = "(Lights Out)";
 }
 
+/// <summary>Phase 8 (V2) low-battery lighting override -- when the
+/// laptop is unplugged and battery percentage drops to or below
+/// ThresholdPercent, the keyboard and lightbar are each overridden to
+/// their own flat color scaled by their own brightness (a "get to a
+/// charger" signal, not a light show) -- independently configurable per
+/// the user's explicit request (2026-09-12), not a single shared color/
+/// brightness. "Battery wins" over the idle screensaver (confirmed by
+/// the user) -- see EffectOverrideCoordinator (JmaStudio.Service) for
+/// how that priority is enforced. See LowBatteryOverrideManager for the
+/// actual logic.</summary>
+public sealed record LowBatteryOverrideConfig
+{
+    public bool Enabled { get; init; }
+    public int ThresholdPercent { get; init; } = 15;
+    public RgbColor KeyboardColor { get; init; } = new(255, 255, 255);
+    public double KeyboardBrightness { get; init; } = 0.3;
+    public RgbColor LightbarColor { get; init; } = new(255, 255, 255);
+    public double LightbarBrightness { get; init; } = 0.3;
+}
+
 /// <summary>A saved lightbar preset -- last-commanded lightbar state
 /// plus (optionally) a bundled reactive-settings snapshot. `Reactive`
 /// is nullable because older presets (see "BLUE" in the real

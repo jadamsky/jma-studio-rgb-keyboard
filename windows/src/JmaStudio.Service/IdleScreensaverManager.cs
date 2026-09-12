@@ -24,6 +24,15 @@
 //   - Controller: polled directly here every tick and diffed against the
 //     previous tick's state (deadzone-aware, so idle analog noise/drift
 //     doesn't count) -- no GUI round trip needed for this source.
+//
+// "Battery wins" (confirmed by the user): Tick() checks
+// EffectOverrideCoordinator.BatteryOverrideActive first and returns
+// immediately, completely skipping Activate/Deactivate/
+// AdvancePlaylistIfDue, while LowBatteryOverrideManager has priority.
+// This manager's own idle-clock bookkeeping (RecordExternalActivity,
+// controller-activity diffing) keeps running underneath regardless,
+// since none of that touches the keyboard/lightbar -- only the
+// activation logic itself is paused.
 
 using System.Diagnostics;
 using JmaStudio.Effects;
@@ -41,6 +50,7 @@ public sealed class IdleScreensaverManager : BackgroundService
     private readonly LightbarController _lightbar;
     private readonly PresetStore _store;
     private readonly Controller? _controller;
+    private readonly EffectOverrideCoordinator _coordinator;
     private readonly ILogger<IdleScreensaverManager> _logger;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly Random _random = new();
@@ -58,12 +68,13 @@ public sealed class IdleScreensaverManager : BackgroundService
 
     public IdleScreensaverManager(
         DaemonState daemonState, LightbarController lightbar, PresetStore store, Controller? controller,
-        ILogger<IdleScreensaverManager> logger)
+        EffectOverrideCoordinator coordinator, ILogger<IdleScreensaverManager> logger)
     {
         _daemonState = daemonState;
         _lightbar = lightbar;
         _store = store;
         _controller = controller;
+        _coordinator = coordinator;
         _logger = logger;
         _lastActivityTime = _clock.Elapsed.TotalSeconds;
     }
@@ -88,6 +99,8 @@ public sealed class IdleScreensaverManager : BackgroundService
 
     private void Tick()
     {
+        if (_coordinator.BatteryOverrideActive || _coordinator.FlashInProgress) return;
+
         IdleScreensaverConfig config = _store.IdleScreensaverConfig.Load();
 
         CheckControllerActivity();

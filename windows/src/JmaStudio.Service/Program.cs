@@ -149,14 +149,31 @@ var lightbarReactiveManager = new LightbarReactiveManager(
     LoggerFactory.Create(b => { b.AddConsole(); b.AddProvider(fileLoggerProvider); }).CreateLogger<LightbarReactiveManager>());
 builder.Services.AddSingleton<IHostedService>(lightbarReactiveManager);
 
-// Phase 8 (V2) idle screensaver -- same "construct directly, register as
-// IHostedService, also hand to Endpoints" pattern as lightbarReactiveManager
-// above, since Endpoints.MapIdleScreensaver needs the same instance for
-// RecordExternalActivity().
+// Phase 8 (V2): idle screensaver + low-battery override. Both are
+// constructed directly (not via a DI factory) and registered as
+// IHostedService, same pattern as lightbarReactiveManager above --
+// Endpoints.MapIdleScreensaver needs the same instance for
+// RecordExternalActivity(). The two managers share ONE
+// EffectOverrideCoordinator instance so "battery wins" (confirmed by
+// the user) can actually be enforced -- see EffectOverrideCoordinator's
+// own header comment for why two fully-independent BackgroundServices
+// would otherwise risk fighting over DaemonState.SetEffect().
+var effectOverrideCoordinator = new EffectOverrideCoordinator();
 var idleScreensaverManager = new IdleScreensaverManager(
-    daemonState, lightbarController, presetStore, controller,
+    daemonState, lightbarController, presetStore, controller, effectOverrideCoordinator,
     LoggerFactory.Create(b => { b.AddConsole(); b.AddProvider(fileLoggerProvider); }).CreateLogger<IdleScreensaverManager>());
 builder.Services.AddSingleton<IHostedService>(idleScreensaverManager);
+var lowBatteryOverrideManager = new LowBatteryOverrideManager(
+    daemonState, lightbarController, presetStore, effectOverrideCoordinator,
+    LoggerFactory.Create(b => { b.AddConsole(); b.AddProvider(fileLoggerProvider); }).CreateLogger<LowBatteryOverrideManager>());
+builder.Services.AddSingleton<IHostedService>(lowBatteryOverrideManager);
+// Hardcoded, always-on plug/unplug red/green flash -- not a selectable
+// feature (no config, no endpoint), per the user's explicit request. See
+// PowerStateFlashManager's own header comment.
+var powerStateFlashManager = new PowerStateFlashManager(
+    daemonState, effectOverrideCoordinator,
+    LoggerFactory.Create(b => { b.AddConsole(); b.AddProvider(fileLoggerProvider); }).CreateLogger<PowerStateFlashManager>());
+builder.Services.AddSingleton<IHostedService>(powerStateFlashManager);
 
 var diagnosticsManager = new DiagnosticsManager(
     lightbarController, daemonState, keyboard, controller, selfTestGate,
@@ -185,6 +202,7 @@ Endpoints.MapDiagnostics(app, diagnosticsManager, controller, logFilePath);
 Endpoints.MapSystem(app);
 Endpoints.MapInput(app, inputListener);
 Endpoints.MapIdleScreensaver(app, idleScreensaverManager, presetStore);
+Endpoints.MapLowBatteryOverride(app, presetStore);
 
 // Loopback-only, same port the Python daemon used -- no auth either
 // way, trusted purely by being on 127.0.0.1, matching daemon/server.py.

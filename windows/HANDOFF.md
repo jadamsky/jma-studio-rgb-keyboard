@@ -73,11 +73,24 @@ built Phase 8's Feature 1 (idle screensaver)** — the user gave the
 explicit go-ahead to start V2, beginning with this feature specifically
 ("start with the screen saver"). Fully built, redeployed live several
 times, and live-tuned with 3 follow-on requests (ListBox theming fix,
-green enabled-checkmarks on the top bar, a "Lights Out" sentinel option)
-— see "Phase 8"'s "Feature 1 -- BUILT" subsection below. Features 2
-(low-battery override) and 3 (controller hot-discovery) remain design-
-only; the go-ahead was specifically for the screensaver, not all of V2
-at once — don't assume it extends further without being told again.
+green enabled-checkmarks on the top bar, a "Lights Out" sentinel option,
+plus a 4th bug found and fixed after that: a slider-label-not-updating
+bug when a saved value exactly equals a slider's Minimum) — see
+"Phase 8"'s "Feature 1 -- BUILT" subsection below. **The user then said
+"battery indicator?"** — direct continuation, no separate confirmation
+needed — and Feature 2 (low-battery override, plus a hardcoded bonus
+plug/unplug red/green flash) was built and live-verified too, across
+several rounds of live tuning (threshold range widened to 1-99%, color/
+brightness split into independent keyboard vs. lightbar controls, the
+panel moved from its own settings window to `MainWindow` as a live-apply
+panel, and the flash timing tuned twice by feel) — see "Feature 2 --
+DONE" below. **The user then said "lets get everything documented in
+handoff, commit everything then move on to the controller usb/bluetooth
+fix"** — Feature 3 (controller hot-discovery) is next, with the
+Discover button's placement (top of `ControllerReactiveWindow`)
+explicitly reconfirmed. See "Feature 3" below for the settled plan and
+the newer "Immediate live state" section at the bottom of this file for
+exactly where that stands.
 Before all that, read "Phase 6.5:
 Tray icon (2026-09-10, sixth session)" for the tray icon scope
 addition, a real crash bug found and fixed live, a startup-behavior
@@ -2606,18 +2619,19 @@ it fails, ask the user for one quick manual click rather than guessing
 at further Win32-level workarounds. The final, correct benchmark
 numbers above were obtained by asking the user to do exactly that.
 
-## Phase 8: Idle screensaver + low-battery lighting override (V2) — Feature 1 BUILT and live-verified; Features 2-3 still DESIGN ONLY (2026-09-11 design, 2026-09-12 Feature 1 build)
+## Phase 8: Idle screensaver + low-battery lighting override (V2) — Features 1 and 2 BUILT and live-verified; Feature 3 next (2026-09-11 design, 2026-09-12 Features 1+2 build)
 
-**Feature 1 (idle screensaver) is fully built and confirmed working live
--- see "Feature 1 -- BUILT" below for the real implementation, live
-testing, and the 3 follow-on fixes/additions made after the user tried
-it.** Features 2 (low-battery override) and 3 (controller hot-discovery)
-are STILL planning only -- the original "wait to be asked" standing
-instruction from the twelfth session still applies to those two. The
-user gave the explicit go-ahead for V2 at the start of the thirteenth
-session ("Let's start building V2, start with the screen saver"), which
-is why Feature 1 and only Feature 1 has been built -- don't assume that
-same go-ahead extends to Features 2/3 without the user saying so again.
+**Features 1 (idle screensaver) and 2 (low-battery override, plus a
+hardcoded plug/unplug flash bonus) are both fully built and confirmed
+working live** -- see "Feature 1 -- BUILT" and "Feature 2 -- DONE" below
+for the real implementations, live testing, and the follow-on fixes/
+tuning made after the user tried each one. Feature 3 (controller
+hot-discovery, USB + Bluetooth) is next, explicitly requested by the
+user immediately after Feature 2 was confirmed done ("lets get
+everything documented in handoff, commit everything then move on to the
+controller usb/bluetooth fix") -- see Feature 3's own section below for
+the settled plan, and the newer "Immediate live state" section at the
+bottom of this file for exactly where that stands.
 
 **Scope, explicitly confirmed by the user: V2 applies to the C# port
 ONLY.** Nothing in this phase touches the Python version (`daemon/`,
@@ -2854,66 +2868,154 @@ was never tested (would silently behave as Lights Out instead of the
 real preset) -- extremely unlikely in practice given the parentheses,
 not worth guarding against unless it ever actually happens.
 
-### Feature 2: Low-battery lighting override
+**Fourth bug found and fixed live, same session, after the three above
+were already committed** (this fix itself is NOT committed yet -- see
+"Immediate live state" at the end of this file): saving `IdleThresholdMinutes`
+as exactly `1` (the slider's `Minimum`) and reopening the window showed
+the stale XAML-placeholder text "5.0 min" instead of "1.0 min", with the
+slider itself correctly positioned at 1 -- only fixed by nudging the
+slider away and back. **Root cause**: `ThresholdSlider` has `Minimum="1"`
+and no `Value` in XAML, so WPF's property coercion already snaps its
+default `Value` (0) up to 1 during BAML parsing, before `LoadAsync` ever
+runs. When the saved config value is ALSO exactly 1, assigning
+`ThresholdSlider.Value = 1` in `LoadAsync` is a no-op as far as WPF's
+dependency-property system is concerned (no real change -> no
+`ValueChanged` event), so `ThresholdLabel.Text` never updates and stays
+on its hardcoded XAML placeholder. **Fixed**: `LoadAsync`
+(`IdleScreensaverWindow.xaml.cs`) now sets both `ThresholdLabel.Text`
+and `IntervalLabel.Text` explicitly right after assigning their
+sliders' `.Value`, rather than relying solely on `ValueChanged` firing.
+Confirmed live: saving threshold=1, closing, reopening now correctly
+shows "1.0 min" immediately, no slider nudge needed.
 
-**Simpler than the screensaver -- no session-isolation problem at all.**
-Battery charge/plugged-in state is plain system hardware state, not
-tied to any interactive session, so it can be read directly in
-`JmaStudio.Service` itself via the plain Win32 `GetSystemPowerStatus`
-API (no need to route anything through the GUI, unlike the screensaver's
-keyboard/mouse detection). Polling once every 30-60 seconds is more
-than sufficient -- battery percentage doesn't change fast enough to
-need anything more frequent, so this is essentially zero-overhead.
+### Feature 2: Low-battery lighting override -- DONE, built and live-verified (2026-09-12, fourteenth session continued)
 
-**Behavior, confirmed by the user**: when battery percentage drops to
-or below a user-set threshold AND the laptop is not plugged in, override
-BOTH the keyboard and lightbar (confirmed: "yes" to "applies to
-keyboard + lightbar together") to a dim-white color -- with the exact
-color/brightness user-configurable via a real color picker (confirmed:
-"yes" to "should the color be configurable," matching this whole app's
-existing philosophy of exposing real pickers everywhere rather than a
-hardcoded value). The instant either condition becomes false (plugged
-in, or percentage climbs back above the threshold), restore whatever
-was running before -- same stash-and-restore pattern as the screensaver
-and controller-reactive, a third reuse of the same mechanism.
+**Built from the settled plan (`EffectOverrideCoordinator.
+BatteryOverrideActive`, `LowBatteryOverrideManager` as a 30s-tick
+`BackgroundService` reading `GetSystemPowerStatus` via P/Invoke,
+stash/restore of both keyboard and lightbar) exactly as designed** --
+see the coordinator/stash-restore reasoning immediately below for what
+carried over unchanged from the original plan. `PowerStatus.cs` (new,
+`JmaStudio.Service`) factors the `GetSystemPowerStatus` P/Invoke out
+into a small shared static class once `PowerStateFlashManager` (see
+below) needed the exact same read -- avoids two copies of the same
+struct/DllImport drifting apart.
 
-**Priority rule, confirmed by the user, do not re-litigate**: "battery
-wins" -- if the low-battery condition and the idle-screensaver condition
-are both true at the same time (e.g. battery crosses the threshold
-while already AFK and the screensaver is showing), the low-battery
-override takes priority over the screensaver. This means the priority
-chain, checked continuously by whatever coordinates these features, is:
-low-battery override (highest) > idle screensaver > normal/whatever the
-user or API last set (lowest). A real architectural implication worth
-noting: with the screensaver's own stash/restore AND the battery
-override's own stash/restore both potentially active in sequence
-(battery triggers while screensaver is already showing), the RESTORE
-target when battery clears must be "whatever the screensaver was
-showing," not "whatever was running before the screensaver started" --
-i.e. these two features' stash/restore need to nest correctly, not each
-assume they're the only one ever active. This needs real care when
-actually implemented; do not just copy-paste two independent stash/
-restore pairs without thinking through the nesting case.
+**Coordinator composes correctly, confirmed live, not just reasoned
+through**: `EffectOverrideCoordinator.BatteryOverrideActive` is checked
+first thing in `IdleScreensaverManager.Tick()`, so the screensaver
+completely pauses (not just its own stash/restore -- its whole
+Activate/Deactivate/AdvancePlaylistIfDue logic) while battery has
+priority, and resumes cleanly once it clears. One accepted minor quirk,
+not worth engineering around: if the screensaver's own cycle timer
+accumulates real time while paused behind a battery override, it may
+jump ahead in the playlist rather than resuming exactly where it paused
+-- purely cosmetic, matches how a real screensaver's timing would drift
+too. Controller Reactive needs NO coordinator check at all: unlike the
+screensaver, it has no background loop reasserting its effect (`Enable`/
+`Disable` are push-based, one `SetEffect` call each), so once battery
+override takes over `DaemonState`'s current effect, Controller Reactive
+just silently stops being rendered until battery's own `Deactivate()`
+restores whatever was stashed (which correctly captures Controller
+Reactive as the current effect if it was live at the moment battery
+activated). **One known, accepted edge case, documented rather than
+fixed**: if the user manually clicks "Disable" on Controller Reactive
+WHILE a battery override is actively showing, `ControllerReactiveManager
+.Disable()` restores ITS OWN `_preEnableState` (whatever was live before
+Controller Reactive was originally enabled) over top of the battery
+override's dim color, and then `LowBatteryOverrideManager`'s own
+eventual `Deactivate()` will still restore the stashed
+`("controller_reactive", ...)` effect it captured at activation time --
+re-enabling something the user just explicitly disabled. Rare (requires
+manually toggling Controller Reactive mid-override) and not fixed;
+flagged for whoever revisits this.
 
-**New config, new file, not yet created**:
-```
-LowBatteryOverrideConfig {
-  Enabled: bool
-  ThresholdPercent: int
-  Color: RgbColor
-  Brightness: double
-}
-```
+**GUI placement changed from the original plan, per explicit user
+request AFTER the initial build**: originally built as its own panel
+inside `IdleScreensaverWindow` with a Save button (matching that
+window's existing pattern). The user then asked to move it to
+`MainWindow.xaml`, between "Live Preview" and "Presets" (its own new
+panel, `MainWindow.BatteryOverride.cs`), and to make it live-apply
+(debounced POST on every change, matching Gradient/Reactive Typing/
+Custom Key Colors) instead of keeping a separate Save button, since it
+now sits among MainWindow's other live-apply panels. Also added, per
+the same request: a live "Battery: N% -- plugged in/on battery" status
+line (folded into the existing 3s `_featureStatusPollTimer`/
+`PollFeatureStatusAsync`, using the new `GET /battery/status`
+endpoint), and the exact override-priority sentence now reads "This
+will override the screen saver and Controller Reactive if they are
+enabled" -- verified accurate (see the Controller Reactive paragraph
+above) before being written into the UI copy.
 
-**New Service pieces, not yet created**: a `LowBatteryOverrideManager`
-(or folded into a shared coordinator with the screensaver, given the
-priority-nesting concern above -- worth considering a single combined
-"effect override coordinator" that owns BOTH features' priority
-resolution in one place, rather than two independent managers each
-guessing at the other's state); `GET`/`POST /battery-override/config`;
-possibly a `GET /battery/status` diagnostic endpoint (current percentage
-+ plugged-in state) useful for the Diagnostics window's existing
-hardware-status-tile pattern, even independent of this feature.
+**Live-tuned after the user tried it**:
+- Threshold slider range widened from an initial 1-50% to the full
+  1-99% the user asked for.
+- Color/brightness split from ONE shared `Color`/`Brightness` pair
+  (applied to both keyboard and lightbar identically) into fully
+  independent `KeyboardColor`/`KeyboardBrightness` and
+  `LightbarColor`/`LightbarBrightness` fields on
+  `LowBatteryOverrideConfig`, per the user's explicit request -- the
+  MainWindow panel now has two separate `ColorSwatchButton`s and two
+  separate brightness sliders. Old saved configs missing these new
+  field names just fall back to the record's own defaults (white,
+  30%) on next load -- no migration needed, this config was only ever
+  touched during this same session's testing.
+
+**Bonus feature added at the user's explicit request, hardcoded and NOT
+selectable/configurable (no config file, no endpoint, no GUI toggle)**:
+`PowerStateFlashManager.cs` (new, `JmaStudio.Service`) polls
+`PowerStatus` every 1s (much tighter than `LowBatteryOverrideManager`'s
+30s -- this one needs to notice a physical plug/unplug quickly) and, on
+an `ACLineStatus` transition, fades the WHOLE keyboard through 2 blinks
+of red (unplugged) or green (plugged in) -- a real fade via many small
+interpolated `SetEffect` calls per blink, not an instant on/off toggle
+(the first version was abrupt on/off and got explicit live feedback:
+"Thats very abrupt. Slow it down and have it fade more" -- then, after
+slowing it down, "a little faster" tuned it back down partway). Final
+timing: `FadeInMs=220, HoldMs=80, FadeOutMs=220, GapMs=130`, ~1s total
+for both blinks. Whatever was displaying before the blink (a preset,
+the screensaver's current playlist entry, the battery override's own
+dim color -- anything `DaemonState.GetEffect()` reports) is restored
+exactly once the sequence finishes, same stash/restore-via-GetEffect()/
+SetEffect() pattern as every other override in this file, needing zero
+special-casing regardless of source. A new `EffectOverrideCoordinator.
+FlashInProgress` bool (parallel to `BatteryOverrideActive`) is held for
+the blink's short duration and checked by both `IdleScreensaverManager`
+and `LowBatteryOverrideManager` so a cycle boundary or activation can't
+land mid-blink and clobber it -- belt-and-suspenders given how brief the
+window is, not a bug ever actually observed live.
+
+**Files, final state**: `JmaStudio.Presets/Models.cs`
+(`LowBatteryOverrideConfig`), `JmaStudio.Presets/JsonStore.cs`
+(`PresetStore.LowBatteryOverrideConfig`), `JmaStudio.Service/
+PowerStatus.cs` (new, shared `GetSystemPowerStatus` wrapper),
+`JmaStudio.Service/EffectOverrideCoordinator.cs`
+(`BatteryOverrideActive` + `FlashInProgress`), `JmaStudio.Service/
+LowBatteryOverrideManager.cs` (new), `JmaStudio.Service/
+PowerStateFlashManager.cs` (new), `JmaStudio.Service/
+IdleScreensaverManager.cs` (coordinator checks), `JmaStudio.Service/
+Endpoints.cs` (`MapLowBatteryOverride`: `GET`/`POST /battery-override/
+config`, `GET /battery/status`), `JmaStudio.Service/Program.cs`
+(constructs the coordinator once, passes it to all three managers;
+registers `LowBatteryOverrideManager` and `PowerStateFlashManager` as
+`IHostedService`), `JmaStudio.Gui/ApiClient.cs` (`GetLowBatteryOverride
+ConfigAsync`, `SetLowBatteryOverrideConfigAsync`, `GetBatteryStatusAsync`),
+`JmaStudio.Gui/MainWindow.xaml` + `MainWindow.BatteryOverride.cs` (new
+panel), `JmaStudio.Gui/MainWindow.xaml.cs` (init call + status-line poll).
+`IdleScreensaverWindow.xaml`/`.xaml.cs` had the panel added and then
+fully removed again once it moved to `MainWindow` -- net diff on that
+file across the session is small.
+
+**Verified live, redeployed to the real installed Service+GUI multiple
+times over the course of this work** (elevated redeploys needed real
+UAC approval each time -- two attempts were silently cancelled before
+one actually landed; if a redeploy's log file never appears, that's the
+UAC prompt not being approved, not a script bug -- re-run and wait for
+the approval). Confirmed via direct endpoint checks (`GET /battery-
+override/config`, `GET /battery/status`) and the user's own live
+testing of the panel, the threshold range, the independent colors, and
+the flash timing (tuned twice by feel, same iterative pattern as the
+rain effect in Phase 9).
 
 ### Feature 3: Controller hot-discovery (USB + Bluetooth)
 
@@ -3026,29 +3128,32 @@ in mind.
 
 ### Summary for whoever builds this next
 
-Four pieces of new scope make up this V2 phase, all confirmed with the
-user and none started in code:
-1. Idle screensaver (multi-effect playlist, cycle interval, randomizer).
-2. Low-battery lighting override (configurable color, keyboard +
-   lightbar, wins over the screensaver when both conditions are true).
+Three pieces of new scope make up this V2 phase:
+1. Idle screensaver (multi-effect playlist, cycle interval, randomizer)
+   -- **DONE**, built and live-verified.
+2. Low-battery lighting override (independent keyboard/lightbar color +
+   brightness, wins over the screensaver and Controller Reactive when
+   both conditions are true) plus the bonus hardcoded plug/unplug red/
+   green flash -- **DONE**, built and live-verified.
 3. Controller hot-discovery (USB + Bluetooth, a mutable-holder refactor
-   plus real Bluetooth report-format verification).
+   plus real Bluetooth report-format verification) -- **NEXT**,
+   explicitly requested by the user right after Feature 2 was confirmed
+   done. See Feature 3's own section above for the settled plan.
 
-Features 1 and 2 are both "override the current effect" mechanisms
-sharing the exact same stash-and-restore shape as the existing
-controller-reactive enable/disable (Phase 5) -- given the priority-
-nesting concern called out under Feature 2, seriously consider building
-a single shared coordinator/stash mechanism for all three rather than
-independent implementations that each have to know about the others'
-state to nest correctly. This was not explicitly requested by the user
-but is a strong architectural recommendation based on how the design
-shook out. Feature 3 is architecturally unrelated to the other two (a
-connection-management refactor, not an effect-override mechanism) and
-can be built independently of them in any order.
+Features 1 and 2 both ended up sharing the exact "override the current
+effect" stash-and-restore shape predicted here, coordinated via the
+single `EffectOverrideCoordinator` this section recommended building --
+that recommendation held up in practice, including when a third
+override (`PowerStateFlashManager`'s flash) was added on top of the
+other two without needing any redesign, just one more bool on the same
+coordinator. Feature 3 remains architecturally unrelated (a connection-
+management refactor, not an effect-override mechanism) and can be built
+independently.
 
-**Do not start any of this without the user's explicit go-ahead in that
-session** -- re-read this whole section first if resuming cold, but the
-standing instruction is to wait, not proceed.
+**Feature 3 has the user's explicit go-ahead as of this session** ("move
+on to the controller usb/bluetooth fix") -- proceed directly into it,
+no need to re-ask. See the newer "Immediate live state" section at the
+bottom of this file for exactly where that work stands.
 
 ## Phase 9: "rain" effect rework -- DONE, built and shipped (2026-09-11, thirteenth session)
 
@@ -3175,44 +3280,45 @@ local/unpushed until Phase 8's V2 work is ready to go out together with
 it. Whoever picks this up next: check `git log`/`git status` before
 assuming what's actually been pushed to `origin` matches local `main`.
 
-## Immediate live state as of writing this (2026-09-12, end of fourteenth session)
+## Immediate live state as of writing this (2026-09-12, end of fourteenth session continued, right before starting Feature 3)
 
 **This section supersedes every "immediate live state" note above it in
 this file — only trust this one.**
 
-- **Phase 8's Feature 1 (idle screensaver) is fully built, redeployed to
-  the real installed Service+GUI, and confirmed working live** —
-  playlist cycling, single-entry no-op re-apply, ListBox theming, the
-  top-bar green checkmarks, and the "Lights Out" sentinel were all
-  exercised live by the user over the course of this session. The
-  currently-running installed instance reflects all of this session's
-  code, since every change was redeployed (stop service → `dotnet
-  publish -o` into both `Service\` and `Gui\` → start service → manually
-  relaunch `JmaStudio.Gui.exe`, since the redeploy script does NOT
-  auto-relaunch the GUI the way it does the Service).
-- **Not yet configured with real settings** — the screensaver was
-  exercised functionally (playlist behavior, theming, checkmarks,
-  Lights Out) but has not been left ENABLED with the user's actual
-  desired real-world settings (threshold, playlist, lightbar choice) as
-  of session end. Check `GET /idle-screensaver/config` fresh next time
-  rather than assuming any particular Enabled state.
-- **Committed locally, still deliberately NOT pushed to `origin`** —
-  same standing plan as Phase 9 (rain): this bundles into a future V2
-  GitHub push once the user decides V2 is ready to go out, not pushed
-  phase-by-phase. Check `git log origin/csharp-port..csharp-port` (or
-  `main`, whichever branch is checked out) before assuming what's
-  actually public.
-- **Features 2 (low-battery override) and 3 (controller hot-discovery)
-  are still 100% design-only** — nothing built, see "Phase 8" above for
-  the complete designs. The user's go-ahead this session was specifically
-  "start with the screen saver," not blanket authorization for the rest
-  of V2 — confirm before starting either of the remaining two features.
+- **Phase 8's Feature 1 (idle screensaver) and Feature 2 (low-battery
+  override + the bonus plug/unplug flash) are BOTH fully built,
+  redeployed to the real installed Service+GUI multiple times, and
+  confirmed working live.** See "Feature 1 -- BUILT" and "Feature 2 --
+  DONE" above for the complete detail on each (bugs found/fixed, live
+  tuning, GUI relocation). The currently-running installed instance
+  reflects the FINAL state of both: Feature 1 with all 4 bug fixes;
+  Feature 2 with independent keyboard/lightbar color+brightness, a
+  1-99% threshold range, and the flash tuned to its final ~1s timing.
+- **Everything from this session is committed** (see the commit(s) made
+  right after this section was written -- check `git log` if picking
+  this up later for the exact hash(es)). Nothing from Phase 8/9 has
+  been pushed to `origin` yet -- stays local until the user decides V2
+  is ready to release, same standing plan as before.
+- **Feature 3 (controller hot-discovery, USB + Bluetooth) is next**,
+  explicitly requested by the user immediately after Feature 2 was
+  confirmed done: "lets get everything documented in handoff, commit
+  everything then move on to the controller usb/bluetooth fix." They
+  also confirmed the Discover button's placement (top of
+  `ControllerReactiveWindow`, matching the original design). See
+  Feature 3's own section above for the full settled plan (mutable
+  `ControllerHolder`, `Controller.TryDiscover()`, the Bluetooth
+  report-format uncertainty) -- this had NOT been started as of this
+  section being written.
 - **Start here next time**: (1) confirm current live state fresh, same
-  checks as always, plus `GET /idle-screensaver/config` specifically;
-  (2) if continuing V2, ask which of Features 2/3 to build next rather
-  than assuming; (3) if wrapping up V2 for a release, that's the point to
-  revisit pushing Phase 8 + Phase 9's local commits to `origin` together,
-  per the user's own stated plan.
+  checks as always; (2) proceed directly into Feature 3 -- the user's
+  go-ahead is already given, no need to re-ask that; (3) DO ask about
+  Bluetooth hardware availability specifically (whether a DualSense can
+  be paired over Bluetooth on this machine THIS session for live
+  verification, or whether that path should be built but left
+  unverified for now) before writing the Bluetooth-specific report-
+  parsing code, per Feature 3's own explicit caution against assuming
+  Bluetooth works from reasoning alone; (4) don't push anything to
+  `origin` without the user raising it again.
 
 ## Immediate live state as of writing this (2026-09-11, end of thirteenth session)
 

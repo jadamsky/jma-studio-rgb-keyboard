@@ -47,6 +47,7 @@ public sealed record DiagnosticsStatusResponse(
     DiagnosticsPerfInfo Perf, AcerLightingServiceInfo AcerLightingService,
     string[] SuspiciousProcesses, PythonInstallInfo Python);
 
+public sealed record BatteryStatusResponse(bool HasBattery, bool OnBattery, int Percent);
 public sealed record RescanResponse(bool KeyboardDetected, bool LightbarDetected, bool ControllerDetected);
 public sealed record ControllerLiveResponse(bool Connected, ControllerState? State);
 public sealed record LogsResponse(string[] Lines);
@@ -308,6 +309,20 @@ public sealed class ApiClient
         var response = await _http.PostAsJsonAsync("/idle-screensaver/config", config, Json);
         return response.IsSuccessStatusCode;
     }
+
+    // ---- low-battery override (Phase 8, V2) ----
+
+    public async Task<LowBatteryOverrideConfig?> GetLowBatteryOverrideConfigAsync() =>
+        await _http.GetFromJsonAsync<LowBatteryOverrideConfig>("/battery-override/config", Json);
+
+    public async Task<bool> SetLowBatteryOverrideConfigAsync(LowBatteryOverrideConfig config)
+    {
+        var response = await _http.PostAsJsonAsync("/battery-override/config", config, Json);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<BatteryStatusResponse?> GetBatteryStatusAsync() =>
+        await _http.GetFromJsonAsync<BatteryStatusResponse>("/battery/status", Json);
 
     // ---- diagnostics ----
 

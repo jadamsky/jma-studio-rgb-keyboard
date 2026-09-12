@@ -140,6 +140,7 @@ public partial class MainWindow : Window
             InitializeTypingReactivePanel();
             InitializeCustomKeysPanel();
             BuildCustomKeysCanvas();
+            await InitializeBatteryOverridePanelAsync();
             _suppressLiveApply = false;
 
             await PollStatusAsync();
@@ -297,6 +298,15 @@ public partial class MainWindow : Window
         {
             IdleScreensaverConfig? screensaverConfig = await _api.GetIdleScreensaverConfigAsync();
             IdleScreensaverEnabledCheck.Visibility = screensaverConfig?.Enabled == true ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch { }
+
+        try
+        {
+            BatteryStatusResponse? battery = await _api.GetBatteryStatusAsync();
+            BatteryStatusText.Text = battery is not { HasBattery: true }
+                ? "Battery: not detected"
+                : $"Battery: {battery.Percent}% -- {(battery.OnBattery ? "on battery" : "plugged in")}";
         }
         catch { }
     }

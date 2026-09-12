@@ -58,8 +58,25 @@ public partial class IdleScreensaverWindow : Window
         }
 
         EnabledCheck.IsChecked = config.Enabled;
+
+        // Setting .Value here does NOT reliably trigger ValueChanged --
+        // found live: ThresholdSlider has Minimum="1" and no Value in
+        // XAML, so WPF's property coercion already snaps its default
+        // Value (0) up to 1 during BAML parsing, before this method ever
+        // runs. If the saved config value is ALSO exactly 1 (i.e. equals
+        // whatever the slider already coerced itself to), assigning
+        // Value = 1 here is a no-op as far as WPF's dependency-property
+        // system is concerned (no actual change -> no ValueChanged
+        // event), so the label never gets updated and stays stuck on its
+        // hardcoded XAML placeholder text ("5.0 min") -- exactly the bug
+        // reported live ("I set it to one... it will say five minutes").
+        // Fix: update both labels explicitly here, not just via the
+        // ValueChanged handler, so they're correct regardless of whether
+        // the assignment above happened to be a real change or not.
         ThresholdSlider.Value = Math.Clamp(config.IdleThresholdMinutes, ThresholdSlider.Minimum, ThresholdSlider.Maximum);
+        ThresholdLabel.Text = $"{ThresholdSlider.Value:0.0} min";
         IntervalSlider.Value = Math.Clamp(config.CycleIntervalSeconds, IntervalSlider.Minimum, IntervalSlider.Maximum);
+        IntervalLabel.Text = $"{(int)IntervalSlider.Value} s";
         RandomOrderCheck.IsChecked = config.RandomOrder;
 
         _playlist.Clear();
